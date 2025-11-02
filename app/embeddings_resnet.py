@@ -2,7 +2,7 @@ import torch
 from torchvision import models, transforms
 from PIL import Image
 import numpy as np
-
+from io import BytesIO
 
 _DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -43,3 +43,12 @@ def get_resnet_embedding(image_path: str):
         return vec
     return vec / norm
 
+def get_resnet_embedding_from_bytes(image_bytes: bytes):
+    img = Image.open(BytesIO(image_bytes)).convert("RGB")
+    input_tensor = _PREPROCESS(img).unsqueeze(0).to(_DEVICE)
+    embedding = _extract_features(input_tensor, _MODEL)
+    vec = embedding.cpu().numpy().flatten()
+    norm = np.linalg.norm(vec)
+    if norm == 0:
+        return vec
+    return vec / norm
