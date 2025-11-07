@@ -30,6 +30,7 @@ while True:
         image_b64 = job["image_b64"]
         location = job.get("location")
         date = job.get("date")
+        itemName = job.get("itemName", "Unnamed Item")
         job_type = job.get("type", "")
 
         # Get embedding from in-memory base64 image
@@ -51,23 +52,50 @@ while True:
 
         if high_conf:
             result = {
-                "status": "high_confidence",
+                "status": "matched",  # Changed to "matched" for frontend compatibility
                 "matches": high_conf,
                 "message": "Match found! Please report to Lost & Found department.",
             }
+            # Still add to database even if matched
+            metadata = {
+                "job_id": job["job_id"],
+                "location": location,
+                "date": date,
+                "itemName": itemName,
+                "type": "lost_report" if job_type == "user_complaint" else "found_report",
+                "user_id": job.get("user_id"),
+                "timestamp": job.get("timestamp", time.time())
+            }
+            db.add_embedding(embedding, metadata)
+            db.save(DB_INDEX_PATH, DB_METADATA_PATH)
         elif med_conf:
             result = {
-                "status": "medium_confidence",
+                "status": "matched",  # Changed to "matched" for frontend compatibility
                 "matches": med_conf,
                 "message": "Potential match found! Please check with Lost & Found department.",
             }
+            # Still add to database even if matched
+            metadata = {
+                "job_id": job["job_id"],
+                "location": location,
+                "date": date,
+                "itemName": itemName,
+                "type": "lost_report" if job_type == "user_complaint" else "found_report",
+                "user_id": job.get("user_id"),
+                "timestamp": job.get("timestamp", time.time())
+            }
+            db.add_embedding(embedding, metadata)
+            db.save(DB_INDEX_PATH, DB_METADATA_PATH)
         else:
             # Add the job as lost or found, depending on its type
             metadata = {
+                "job_id": job["job_id"],  # Store job_id for tracking
                 "location": location,
                 "date": date,
+                "itemName": itemName,
                 "type": "lost_report" if job_type == "user_complaint" else "found_report",
-                # (Optional: add a unique identifier if needed)
+                "user_id": job.get("user_id"),  # Store user_id if available
+                "timestamp": job.get("timestamp", time.time())
             }
             db.add_embedding(embedding, metadata)
             db.save(DB_INDEX_PATH, DB_METADATA_PATH)
@@ -79,6 +107,14 @@ while True:
                     else "No match found; found item has been added to the database."
                 ),
             }
+        
+        # Update job status in Redis
+        job_info_str = r.get(f"job:{job['job_id']}")
+        if job_info_str:
+            job_info = json.loads(job_info_str)
+            job_info["status"] = result["status"]
+            job_info["processed_at"] = time.time()
+            r.set(f"job:{job['job_id']}", json.dumps(job_info))
 
         # Save the result back to Redis
         r.set(f"result:{job['job_id']}", json.dumps(result))
