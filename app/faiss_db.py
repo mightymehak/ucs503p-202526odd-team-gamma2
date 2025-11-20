@@ -46,10 +46,10 @@ class FaissImageDB:
         return matches
 
     def get_best_matches(self, matches):
-        # Sort by score descending, then select by stricter thresholds to reduce false positives
+        # Sort by score descending, then select by thresholds
         matches = sorted(matches, key=lambda x: x["score"], reverse=True)
-        high_conf = [m for m in matches if m["score"] >= 0.95]
-        med_conf = [m for m in matches if 0.80 <= m["score"] < 0.95]
+        high_conf = [m for m in matches if m["score"] >= 0.92]
+        med_conf = [m for m in matches if 0.72 <= m["score"] < 0.92]
         return high_conf, med_conf
 
     def save(self, index_path: str, metadata_path: str):
@@ -67,23 +67,3 @@ class FaissImageDB:
                 self.metadata = pickle.load(f)
         else:
             raise FileNotFoundError(f"Metadata file not found: {metadata_path}")
-
-    def remove_by_job_id(self, job_id: str) -> bool:
-        if self.index.ntotal == 0 or len(self.metadata) == 0:
-            return False
-        keep = []
-        for i, m in enumerate(self.metadata):
-            jid = m.get("job_id") if isinstance(m, dict) else None
-            if jid != job_id:
-                keep.append(i)
-        if len(keep) == len(self.metadata):
-            return False
-        new_index = faiss.IndexFlatIP(self.index.d)
-        new_meta = []
-        for i in keep:
-            vec = self.index.reconstruct(i)
-            new_index.add(np.array([vec]).astype(np.float32))
-            new_meta.append(self.metadata[i])
-        self.index = new_index
-        self.metadata = new_meta
-        return True
