@@ -6,7 +6,6 @@ import { Popover, PopoverContent, PopoverTrigger } from "../ui/popover";
 import { Button } from "../ui/button";
 import { Badge } from "../ui/badge";
 import StatsPanel from "./StatsPanel";
-import PendingClaimsTable from "./PendingClaimsTable";
 import FoundItemsTable from "./FoundItemsTable";
 import LostItemsTable from "./LostItemsTable";
 import NotificationPanel from "./NotificationPanel";
@@ -20,7 +19,7 @@ interface AdminDashboardProps {
 
 const AdminDashboard = ({ onLogout }: AdminDashboardProps) => {
   const [searchQuery, setSearchQuery] = useState("");
-  const [activeTab, setActiveTab] = useState("claims");
+  const [activeTab, setActiveTab] = useState("found");
   const tabsRef = useRef<HTMLDivElement>(null);
   
   const { user } = useAuth();
@@ -107,10 +106,7 @@ const AdminDashboard = ({ onLogout }: AdminDashboardProps) => {
 
         <div className="mt-8" ref={tabsRef}>
           <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-            <TabsList className="grid w-full grid-cols-3 mb-6">
-              <TabsTrigger value="claims" onClick={scrollToTabs}>
-                Pending Claims
-              </TabsTrigger>
+            <TabsList className="grid w-full grid-cols-2 mb-6">
               <TabsTrigger value="found" onClick={scrollToTabs}>
                 Found Items
               </TabsTrigger>
@@ -118,10 +114,6 @@ const AdminDashboard = ({ onLogout }: AdminDashboardProps) => {
                 Lost Items
               </TabsTrigger>
             </TabsList>
-            
-            <TabsContent value="claims" className="mt-0">
-              <PendingClaimsTable searchQuery={searchQuery} />
-            </TabsContent>
             
             <TabsContent value="found" className="mt-0">
               <FoundItemsTable 
