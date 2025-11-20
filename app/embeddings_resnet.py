@@ -43,12 +43,23 @@ def get_resnet_embedding(image_path: str):
         return vec
     return vec / norm
 
-def get_resnet_embedding_from_bytes(image_bytes: bytes):
-    img = Image.open(BytesIO(image_bytes)).convert("RGB")
+def _embed_img(img: Image.Image) -> np.ndarray:
     input_tensor = _PREPROCESS(img).unsqueeze(0).to(_DEVICE)
     embedding = _extract_features(input_tensor, _MODEL)
     vec = embedding.cpu().numpy().flatten()
     norm = np.linalg.norm(vec)
-    if norm == 0:
-        return vec
-    return vec / norm
+    return vec if norm == 0 else vec / norm
+
+def get_resnet_embedding_from_bytes(image_bytes: bytes):
+    # Rotation-robust embedding: average features over 0/90/180/270 rotations
+    img = Image.open(BytesIO(image_bytes)).convert("RGB")
+    variants = [
+        img,
+        img.rotate(90, expand=True),
+        img.rotate(180, expand=True),
+        img.rotate(270, expand=True),
+    ]
+    vecs = [_embed_img(v) for v in variants]
+    avg = np.mean(np.stack(vecs, axis=0), axis=0)
+    norm = np.linalg.norm(avg)
+    return avg if norm == 0 else avg / norm

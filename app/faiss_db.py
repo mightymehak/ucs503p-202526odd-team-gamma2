@@ -19,8 +19,10 @@ class FaissImageDB:
 
     def location_similarity(self, loc1, loc2):
         if not loc1 or not loc2:
-            return 0.0
-        if loc1 == loc2:
+            return 0.5
+        a = str(loc1).strip().lower()
+        b = str(loc2).strip().lower()
+        if a == b:
             return 1.0
         return 0.5
 
@@ -36,7 +38,7 @@ class FaissImageDB:
             if idx < 0 or idx >= len(self.metadata):
                 continue
             meta = self.metadata[idx]
-            if not isinstance(meta, dict) or meta.get('type') != search_type:
+            if not isinstance(meta, dict) or meta.get('deleted') or meta.get('type') != search_type:
                 continue
             sim_score = (score + 1) / 2  # Normalize to [0,1]
             loc_score = self.location_similarity(meta.get("location"), query_location)
@@ -67,3 +69,23 @@ class FaissImageDB:
                 self.metadata = pickle.load(f)
         else:
             raise FileNotFoundError(f"Metadata file not found: {metadata_path}")
+        try:
+            ntotal = getattr(self.index, 'ntotal', 0)
+            if isinstance(self.metadata, list):
+                if len(self.metadata) > ntotal:
+                    self.metadata = self.metadata[:ntotal]
+                elif len(self.metadata) < ntotal:
+                    pad = ntotal - len(self.metadata)
+                    self.metadata.extend([{"deleted": True}] * pad)
+        except Exception:
+            pass
+
+    def remove_by_job_id(self, job_id: str) -> bool:
+        # Soft-delete: mark metadata entries as deleted to keep index positions stable
+        changed = False
+        for i, m in enumerate(self.metadata):
+            if isinstance(m, dict) and m.get("job_id") == job_id and not m.get("deleted"):
+                m["deleted"] = True
+                self.metadata[i] = m
+                changed = True
+        return changed

@@ -24,8 +24,9 @@ const fastApi: AxiosInstance = axios.create({
 fastApi.interceptors.request.use(
   (config: InternalAxiosRequestConfig) => {
     const token = localStorage.getItem('token');
-    const url = config.url || '';
-    const needsAuth = url.startsWith('/admin');
+    const url = (config.url || '').toLowerCase();
+    const method = (config.method || 'get').toLowerCase();
+    const needsAuth = method !== 'get' || url.startsWith('/admin') || url.startsWith('/user');
     if (token && needsAuth && config.headers) {
       config.headers.Authorization = `Bearer ${token}`;
     }
@@ -168,13 +169,13 @@ export const fastApiService = {
   
   deleteComplaint: async (jobId: string): Promise<{ status: string; job_id: string }> => {
     try {
-      const response = await fastApi.delete<{ status: string; job_id: string }>(`/user/complaints/${jobId}`);
-      return response.data;
+      const res = await requestWithRetry(() => fastApi.delete<{ status: string; job_id: string }>(`/user/complaints/${jobId}`));
+      return res.data;
     } catch (err: any) {
       const status = err?.response?.status;
       if (status === 405) {
-        const response = await fastApi.post<{ status: string; job_id: string }>(`/user/complaints/${jobId}/delete`);
-        return response.data;
+        const res = await requestWithRetry(() => fastApi.post<{ status: string; job_id: string }>(`/user/complaints/${jobId}/delete`));
+        return res.data;
       }
       throw err;
     }

@@ -257,6 +257,9 @@ async def admin_list_lost_items_faiss():
                 continue
             job_id = m.get("job_id")
             job_info_str = r.get(f"job:{job_id}") if job_id else None
+            if not job_info_str:
+                # Skip entries that have been removed from Redis
+                continue
             job_info = json.loads(job_info_str) if job_info_str else {}
             image_url = job_info.get("image_url")
             result_str = r.get(f"result:{job_id}") if job_id else None

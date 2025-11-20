@@ -17,8 +17,10 @@ app.add_middleware(
     ],
     allow_origin_regex=r"^https://.*\.onrender\.com$",
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "DELETE", "PUT", "OPTIONS"],
+    allow_headers=["*", "Authorization", "Content-Type"],
+    expose_headers=["*"],
+    max_age=600,
 )
 
 @app.get("/")

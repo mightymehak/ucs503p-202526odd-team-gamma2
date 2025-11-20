@@ -310,10 +310,8 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout }) => {
       setUnreadCount(val);
     };
     window.addEventListener('storage', syncUnread);
-    window.addEventListener(`localStorageUpdated:lost:${user?._id || 'anonymous'}`, syncUnread);
     return () => {
       window.removeEventListener('storage', syncUnread);
-      window.removeEventListener(`localStorageUpdated:lost:${user?._id || 'anonymous'}`, syncUnread);
     };
   }, [user]);
 
