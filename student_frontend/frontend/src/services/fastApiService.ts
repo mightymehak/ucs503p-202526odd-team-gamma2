@@ -24,15 +24,33 @@ const fastApi: AxiosInstance = axios.create({
 fastApi.interceptors.request.use(
   (config: InternalAxiosRequestConfig) => {
     const token = localStorage.getItem('token');
-    if (token && config.headers) {
+    const url = config.url || '';
+    const needsAuth = url.startsWith('/admin');
+    if (token && needsAuth && config.headers) {
       config.headers.Authorization = `Bearer ${token}`;
     }
     return config;
   },
-  (error) => {
-    return Promise.reject(error);
-  }
+  (error) => Promise.reject(error)
 );
+
+const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+const requestWithRetry = async <T>(fn: () => Promise<T>, retries = 3, backoffMs = 800): Promise<T> => {
+  let attempt = 0;
+  while (true) {
+    try {
+      return await fn();
+    } catch (err: any) {
+      const status = err?.response?.status;
+      const networkFail = err?.code === 'ERR_NETWORK' || err?.message?.includes('ERR_FAILED');
+      if (attempt >= retries || (!networkFail && status !== 502)) {
+        throw err;
+      }
+      attempt += 1;
+      await delay(backoffMs * attempt);
+    }
+  }
+};
 
 // Types for FastAPI responses
 export interface ComplaintSubmissionResponse {
@@ -124,8 +142,8 @@ export const fastApiService = {
 
   // Check status of a job
   checkStatus: async (jobId: string): Promise<StatusResponse> => {
-    const response = await fastApi.get<StatusResponse>(`/results/${jobId}`);
-    return response.data;
+    const res = await requestWithRetry(() => fastApi.get<StatusResponse>(`/results/${jobId}`));
+    return res.data;
   },
 
   // Get all complaints for the current user
@@ -140,12 +158,10 @@ export const fastApiService = {
   // Get a specific complaint by job_id
   getComplaintById: async (jobId: string): Promise<ComplaintItem | null> => {
     try {
-      const response = await fastApi.get<ComplaintItem>(`/user/complaints/${jobId}`);
-      return response.data;
+      const res = await requestWithRetry(() => fastApi.get<ComplaintItem>(`/user/complaints/${jobId}`));
+      return res.data;
     } catch (err: any) {
-      if (err?.response?.status === 404) {
-        return null;
-      }
+      if (err?.response?.status === 404) return null;
       throw err;
     }
   },
@@ -165,16 +181,16 @@ export const fastApiService = {
   },
   
   getAdminLostItems: async (): Promise<ComplaintItem[]> => {
-    const response = await fastApi.get<{ lost_items: ComplaintItem[] }>(`/admin/lost-items`);
-    return response.data.lost_items;
+    const res = await requestWithRetry(() => fastApi.get<{ lost_items: ComplaintItem[] }>(`/admin/lost-items`));
+    return res.data.lost_items;
   },
   getAdminLostItemsFaiss: async (): Promise<ComplaintItem[]> => {
-    const response = await fastApi.get<{ lost_items: ComplaintItem[] }>(`/admin/lost-items-faiss`);
-    return response.data.lost_items;
+    const res = await requestWithRetry(() => fastApi.get<{ lost_items: ComplaintItem[] }>(`/admin/lost-items-faiss`));
+    return res.data.lost_items;
   },
   getAdminFoundItems: async (): Promise<ComplaintItem[]> => {
-    const response = await fastApi.get<{ found_items: ComplaintItem[] }>(`/admin/found-items`);
-    return response.data.found_items;
+    const res = await requestWithRetry(() => fastApi.get<{ found_items: ComplaintItem[] }>(`/admin/found-items`));
+    return res.data.found_items;
   },
   deleteFoundItem: async (jobId: string): Promise<{ status: string; job_id: string }> => {
     try {
