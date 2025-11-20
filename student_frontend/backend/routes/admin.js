@@ -3,12 +3,12 @@ const express = require('express');
 const router = express.Router();
 const Complaint = require('../models/Complaint');
 const User = require('../models/User');
-const { protect, adminOnly } = require('../middleware/auth');
+const { protectAdmin } = require('../middleware/auth');
 
 // @route   GET /api/admin/complaints
 // @desc    Get all complaints (admin only)
 // @access  Private/Admin
-router.get('/complaints', protect, adminOnly, async (req, res) => {
+router.get('/complaints', protectAdmin, async (req, res) => {
   try {
     const complaints = await Complaint.find()
       .populate('userId', 'name email')
@@ -22,7 +22,7 @@ router.get('/complaints', protect, adminOnly, async (req, res) => {
 // @route   PUT /api/admin/complaints/:id/match
 // @desc    Mark complaint as matched
 // @access  Private/Admin
-router.put('/complaints/:id/match', protect, adminOnly, async (req, res) => {
+router.put('/complaints/:id/match', protectAdmin, async (req, res) => {
   try {
     const complaint = await Complaint.findById(req.params.id);
 
@@ -42,7 +42,7 @@ router.put('/complaints/:id/match', protect, adminOnly, async (req, res) => {
 // @route   PUT /api/admin/complaints/:id/resolve
 // @desc    Mark complaint as resolved
 // @access  Private/Admin
-router.put('/complaints/:id/resolve', protect, adminOnly, async (req, res) => {
+router.put('/complaints/:id/resolve', protectAdmin, async (req, res) => {
   try {
     const complaint = await Complaint.findById(req.params.id);
 

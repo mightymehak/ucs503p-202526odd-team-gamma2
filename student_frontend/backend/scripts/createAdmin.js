@@ -1,7 +1,7 @@
 // scripts/createAdmin.js
 const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
-const User = require('../models/User');
+const Admin = require('../models/Admin');
 require('dotenv').config();
 
 const createAdmins = async () => {
@@ -13,13 +13,13 @@ const createAdmins = async () => {
         name: 'Super Admin',
         email: 'admin@lostandfound.com',
         password: 'admin123',
-        role: 'admin',
+        uniqueId: '123456',
       },
       {
         name: 'Manager Admin',
         email: 'manager@lostandfound.com',
         password: 'manager123',
-        role: 'admin',
+        uniqueId: '654321',
       },
     ];
 
@@ -27,14 +27,14 @@ const createAdmins = async () => {
       const salt = await bcrypt.genSalt(10);
       admin.password = await bcrypt.hash(admin.password, salt);
       
-      await User.findOneAndUpdate(
+      await Admin.findOneAndUpdate(
         { email: admin.email },
         admin,
         { upsert: true, new: true }
       );
     }
 
-    console.log('✅ Admin users created');
+    console.log('✅ Admin accounts created in Admin collection');
     process.exit();
   } catch (error) {
     console.error('❌ Error:', error);

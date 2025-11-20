@@ -40,6 +40,12 @@ interface LoginData {
   role: string;
 }
 
+interface AdminLoginData {
+  email: string;
+  password: string;
+  uniqueId: string;
+}
+
 interface RegisterData {
   name: string;
   email: string;
@@ -77,8 +83,18 @@ export const authAPI = {
     return response.data;
   },
   
+  loginAdmin: async (data: AdminLoginData): Promise<AuthResponse> => {
+    const response = await api.post<AuthResponse>('/auth/admin-login', data);
+    return response.data;
+  },
+  
   getCurrentUser: async (): Promise<Omit<AuthResponse, 'token'>> => {
     const response = await api.get<Omit<AuthResponse, 'token'>>('/auth/me');
+    return response.data;
+  },
+  
+  getCurrentAdmin: async (): Promise<Omit<AuthResponse, 'token'>> => {
+    const response = await api.get<Omit<AuthResponse, 'token'>>('/auth/admin-me');
     return response.data;
   },
 };

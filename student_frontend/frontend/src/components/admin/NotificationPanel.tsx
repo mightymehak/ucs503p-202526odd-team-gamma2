@@ -16,45 +16,53 @@ interface Notification {
 interface NotificationPanelProps {
   onNotificationRead?: () => void;
   onMarkAllAsRead?: () => void;
+  userId: string;
+  category: "lost" | "found";
 }
 
-const NotificationPanel = ({ onNotificationRead, onMarkAllAsRead }: NotificationPanelProps) => {
+const NotificationPanel = ({ onNotificationRead, onMarkAllAsRead, userId, category }: NotificationPanelProps) => {
   // Load notifications from localStorage on mount
   const [notifications, setNotifications] = useState<Notification[]>(() => {
-    const saved = localStorage.getItem('notifications');
+    const key = `notifications:${category}:${userId}`;
+    const saved = localStorage.getItem(key);
     return saved !== null ? JSON.parse(saved) : [];
   });
 
   // Save notifications to localStorage whenever they change
   useEffect(() => {
-    localStorage.setItem('notifications', JSON.stringify(notifications));
-  }, [notifications]);
+    const key = `notifications:${category}:${userId}`;
+    localStorage.setItem(key, JSON.stringify(notifications));
+  }, [notifications, userId, category]);
 
   // Listen for storage changes (new notifications added)
   useEffect(() => {
     const handleStorageChange = () => {
-      const saved = localStorage.getItem('notifications');
+      const saved = localStorage.getItem(`notifications:${category}:${userId}`);
       if (saved !== null) {
         setNotifications(JSON.parse(saved));
       }
     };
 
     window.addEventListener('storage', handleStorageChange);
-    window.addEventListener('localStorageUpdated', handleStorageChange);
+    window.addEventListener(`localStorageUpdated:${category}:${userId}`, handleStorageChange as EventListener);
 
     return () => {
       window.removeEventListener('storage', handleStorageChange);
-      window.removeEventListener('localStorageUpdated', handleStorageChange);
+      window.removeEventListener(`localStorageUpdated:${category}:${userId}`, handleStorageChange as EventListener);
     };
-  }, []);
+  }, [userId, category]);
 
   // Mark individual notification as read
   const handleMarkAsRead = (notificationId: number) => {
-    setNotifications((prevNotifications) =>
-      prevNotifications.map((notif) =>
-        notif.id === notificationId ? { ...notif, read: true } : notif
-      )
-    );
+    setNotifications((prevNotifications) => {
+      const updated = prevNotifications.filter((n) => n.id !== notificationId);
+      const countKey = `unreadNotificationCount:${category}:${userId}`;
+      const currentCount = parseInt(localStorage.getItem(countKey) || '0', 10);
+      localStorage.setItem(countKey, Math.max(0, currentCount - 1).toString());
+      localStorage.setItem(`notifications:${category}:${userId}`, JSON.stringify(updated));
+      window.dispatchEvent(new CustomEvent(`localStorageUpdated:${category}:${userId}`));
+      return updated;
+    });
     
     if (onNotificationRead) {
       onNotificationRead();
@@ -63,9 +71,13 @@ const NotificationPanel = ({ onNotificationRead, onMarkAllAsRead }: Notification
 
   // Mark all notifications as read
   const handleMarkAllRead = () => {
-    setNotifications((prevNotifications) =>
-      prevNotifications.map((notif) => ({ ...notif, read: true }))
-    );
+    setNotifications(() => {
+      const countKey = `unreadNotificationCount:${category}:${userId}`;
+      localStorage.setItem(countKey, '0');
+      localStorage.setItem(`notifications:${category}:${userId}`, JSON.stringify([]));
+      window.dispatchEvent(new CustomEvent(`localStorageUpdated:${category}:${userId}`));
+      return [];
+    });
     
     if (onMarkAllAsRead) {
       onMarkAllAsRead();

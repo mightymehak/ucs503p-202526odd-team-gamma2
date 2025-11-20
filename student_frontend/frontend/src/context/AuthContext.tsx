@@ -18,7 +18,7 @@ interface AuthResult {
 interface AuthContextType {
   user: User | null;
   loading: boolean;
-  login: (email: string, password: string, role: string) => Promise<AuthResult>;
+  login: (email: string, passwordOrUniqueId: string, role: string, uniqueId?: string) => Promise<AuthResult>;
   register: (name: string, email: string, password: string) => Promise<AuthResult>;
   logout: () => void;
   isAuthenticated: boolean;
@@ -47,12 +47,33 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     const initAuth = async () => {
       if (token) {
         try {
-          const userData = await authAPI.getCurrentUser();
-          setUser(userData as User);
-        } catch (error) {
-          console.error('Failed to get user:', error);
-          localStorage.removeItem('token');
-          setToken(null);
+          const storedRole = localStorage.getItem('role');
+          if (storedRole === 'admin') {
+            const adminData = await authAPI.getCurrentAdmin();
+            setUser(adminData as User);
+          } else if (storedRole === 'student') {
+            const userData = await authAPI.getCurrentUser();
+            setUser(userData as User);
+          } else {
+            const parts = token.split('.');
+            const payload = parts[1] ? JSON.parse(atob(parts[1].replace(/-/g, '+').replace(/_/g, '/'))) : {};
+            const t = payload?.type;
+            if (t === 'admin') {
+              const adminData = await authAPI.getCurrentAdmin();
+              setUser(adminData as User);
+            } else {
+              const userData = await authAPI.getCurrentUser();
+              setUser(userData as User);
+            }
+          }
+        } catch (error: any) {
+          if (error.response?.status === 401 || error.response?.status === 403) {
+            localStorage.removeItem('token');
+            localStorage.removeItem('role');
+            setToken(null);
+          } else if (error.code === 'ERR_NETWORK' || error.message?.includes('ERR_CONNECTION_REFUSED')) {
+            console.warn('Backend server is not running. Please start the Node.js backend server.');
+          }
         }
       }
       setLoading(false);
@@ -61,10 +82,19 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     initAuth();
   }, [token]);
 
-  const login = async (email: string, password: string, role: string): Promise<AuthResult> => {
+  const login = async (email: string, passwordOrUniqueId: string, role: string, uniqueId?: string): Promise<AuthResult> => {
     try {
-      const data = await authAPI.login({ email, password, role });
+      let data;
+      if (role === 'admin') {
+        if (!uniqueId) {
+          throw new Error('Unique ID is required for admin login');
+        }
+        data = await authAPI.loginAdmin({ email, password: passwordOrUniqueId, uniqueId });
+      } else {
+        data = await authAPI.login({ email, password: passwordOrUniqueId, role });
+      }
       localStorage.setItem('token', data.token);
+      localStorage.setItem('role', data.role);
       setToken(data.token);
       const userData: User = {
         _id: data._id,
@@ -105,6 +135,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
 
   const logout = () => {
     localStorage.removeItem('token');
+    localStorage.removeItem('role');
     setToken(null);
     setUser(null);
   };

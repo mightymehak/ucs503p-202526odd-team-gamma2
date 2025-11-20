@@ -10,6 +10,7 @@ interface LoginProps {
 const Login: React.FC<LoginProps> = ({ role, onBack }) => {
   const [email, setEmail] = useState<string>("");
   const [password, setPassword] = useState<string>("");
+  const [uniqueId, setUniqueId] = useState<string>("");
   const [rememberMe, setRememberMe] = useState<boolean>(false);
   const [loading, setLoading] = useState<boolean>(false);
   const [isSignUp, setIsSignUp] = useState<boolean>(false);
@@ -22,11 +23,20 @@ const Login: React.FC<LoginProps> = ({ role, onBack }) => {
   useEffect(() => {
     const rememberedEmail = localStorage.getItem('rememberedEmail');
     const rememberedPassword = localStorage.getItem('rememberedPassword');
+    const rememberedUniqueId = localStorage.getItem('rememberedUniqueId');
     
-    if (rememberedEmail && rememberedPassword) {
-      setEmail(rememberedEmail);
+    if (role === 'admin') {
+      if (rememberedEmail && rememberedUniqueId) {
+        setEmail(rememberedEmail);
+        setUniqueId(rememberedUniqueId);
+        setRememberMe(true);
+      }
+    } else {
+      if (rememberedEmail && rememberedPassword) {
+        setEmail(rememberedEmail);
       setPassword(rememberedPassword);
-      setRememberMe(true);
+        setRememberMe(true);
+      }
     }
 
     const handlePopState = () => {
@@ -48,15 +58,17 @@ const Login: React.FC<LoginProps> = ({ role, onBack }) => {
       window.removeEventListener('popstate', handlePopState);
       window.removeEventListener('keydown', handleEscKey);
     };
-  }, [onBack]);
+  }, [onBack, role]);
 
   const handleLogin = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     setError("");
     
-    if (!email || !password) {
-      setError("Please enter both email and password");
-      return;
+    if (role === 'student') {
+      if (!email || !password) {
+        setError("Please enter both email and password");
+        return;
+      }
     }
 
     setLoading(true);
@@ -117,16 +129,20 @@ const Login: React.FC<LoginProps> = ({ role, onBack }) => {
         }
       }
     } else {
-      // Admin Login
-      const result = await login(email, password, 'admin');
+      if (!email || !password || !uniqueId) {
+        setError("Email, password, and unique ID are required");
+        setLoading(false);
+        return;
+      }
+      const result = await login(email, password, 'admin', uniqueId);
       
       if (result.success) {
         if (rememberMe) {
           localStorage.setItem('rememberedEmail', email);
-          localStorage.setItem('rememberedPassword', password);
+          localStorage.setItem('rememberedUniqueId', uniqueId);
         } else {
           localStorage.removeItem('rememberedEmail');
-          localStorage.removeItem('rememberedPassword');
+          localStorage.removeItem('rememberedUniqueId');
         }
       } else {
         setError(result.message || "Invalid admin credentials");
@@ -143,7 +159,7 @@ const Login: React.FC<LoginProps> = ({ role, onBack }) => {
             <h1 className="text-3xl font-bold text-gray-900">Lost & Found</h1>
             <p className="text-gray-600">
               {role === "admin" 
-                ? "Enter your credentials to access the admin dashboard"
+                ? "Enter your email, password, and unique ID"
                 : isSignUp 
                   ? "Create your student account"
                   : "Login to your student account"}
@@ -187,21 +203,58 @@ const Login: React.FC<LoginProps> = ({ role, onBack }) => {
               />
             </div>
 
-            <div className="space-y-2">
-              <label htmlFor="password" className="block text-sm font-semibold text-gray-700">
-                Password
-              </label>
-              <input
-                id="password"
-                type="password"
-                placeholder="Enter your password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                required
-                autoComplete="current-password"
-              />
-            </div>
+            {role === "admin" ? (
+              <>
+                <div className="space-y-2">
+                  <label htmlFor="password" className="block text-sm font-semibold text-gray-700">
+                    Password
+                  </label>
+                  <input
+                    id="password"
+                    type="password"
+                    placeholder="Enter your password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    required
+                    autoComplete="current-password"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label htmlFor="uniqueId" className="block text-sm font-semibold text-gray-700">
+                    Unique ID (6 digits)
+                  </label>
+                  <input
+                    id="uniqueId"
+                    type="tel"
+                    placeholder="Enter your 6-digit unique ID"
+                    value={uniqueId}
+                    onChange={(e) => setUniqueId(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    required
+                    inputMode="numeric"
+                    pattern="[0-9]{6}"
+                    title="Enter exactly 6 digits"
+                  />
+                </div>
+              </>
+            ) : (
+              <div className="space-y-2">
+                <label htmlFor="password" className="block text-sm font-semibold text-gray-700">
+                  Password
+                </label>
+                <input
+                  id="password"
+                  type="password"
+                  placeholder="Enter your password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  required
+                  autoComplete="current-password"
+                />
+              </div>
+            )}
 
             {isSignUp && role === "student" && (
               <div className="space-y-2">

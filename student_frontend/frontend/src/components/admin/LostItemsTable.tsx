@@ -1,8 +1,8 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "../ui/card";
 import { Badge } from "../ui/badge";
-import { Button } from "../ui/button";
 import { FileSearch } from "lucide-react";
+import { fastApiService, ComplaintItem } from "../../services/fastApiService";
 
 interface LostItemsTableProps {
   searchQuery: string;
@@ -15,7 +15,7 @@ interface LostItem {
   dateReported: string;
   location: string;
   status: string;
-  description?: string;
+  imageUrl?: string;
 }
 
 const LostItemsTable = ({ searchQuery }: LostItemsTableProps) => {
@@ -24,11 +24,58 @@ const LostItemsTable = ({ searchQuery }: LostItemsTableProps) => {
     const saved = localStorage.getItem('lostItems');
     return saved !== null ? JSON.parse(saved) : [];
   });
+  const pendingWatchRef = useRef<Record<string, NodeJS.Timeout>>({});
 
   // Save items whenever they change
   useEffect(() => {
     localStorage.setItem('lostItems', JSON.stringify(items));
   }, [items]);
+
+  const fetchLost = async () => {
+    try {
+      let lost = await fastApiService.getAdminLostItemsFaiss();
+      if (!Array.isArray(lost) || lost.length === 0) {
+        lost = await fastApiService.getAdminLostItems();
+      }
+      const mapped: LostItem[] = lost.map((c: ComplaintItem) => ({
+        id: c.job_id,
+        name: c.itemName || "Item",
+        reporter: (c as any).user_name || (c.user_id ? `User ${c.user_id.substring(0,6)}` : "Unknown"),
+        dateReported: c.date || new Date(c.timestamp * 1000).toISOString().split('T')[0],
+        location: c.location || "",
+        status: c.status || "searching",
+        imageUrl: c.job_id ? ((c as any).image_url || fastApiService.getImageUrl(c.job_id)) : undefined,
+      }));
+      setItems(mapped);
+      mapped.forEach((it) => {
+        const jid = it.id;
+        if (it.status === 'pending' && jid && !pendingWatchRef.current[jid]) {
+          pendingWatchRef.current[jid] = setInterval(async () => {
+            try {
+              const res = await fastApiService.checkStatus(jid);
+              if (res.status && res.status !== 'pending') {
+                setItems(prev => prev.map(item => (
+                  item.id === jid ? { ...item, status: res.status as any } : item
+                )));
+                clearInterval(pendingWatchRef.current[jid]);
+                delete pendingWatchRef.current[jid];
+              }
+            } catch {}
+          }, 6000);
+        }
+      });
+    } catch (e) {
+      // fallback keeps localStorage display
+    }
+  };
+
+  useEffect(() => {
+    fetchLost();
+    return () => {
+      Object.values(pendingWatchRef.current).forEach(clearInterval);
+      pendingWatchRef.current = {};
+    };
+  }, []);
 
   const filteredItems = items.filter((item) =>
     searchQuery === "" ||
@@ -69,14 +116,18 @@ const LostItemsTable = ({ searchQuery }: LostItemsTableProps) => {
                 key={item.id}
                 className="flex items-center justify-between p-4 border rounded-lg hover:bg-muted/50 transition-colors"
               >
-                <div className="flex-1">
+                <div className="flex items-center gap-4 flex-1">
+                  <img
+                    src={(item as any).imageUrl || undefined}
+                    alt={item.name}
+                    className="w-16 h-16 object-cover rounded-md border"
+                    onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }}
+                  />
                   <div className="flex items-center gap-3">
                     <h4 className="font-semibold text-foreground">{item.name}</h4>
                     {getStatusBadge(item.status)}
                   </div>
                   <div className="mt-1 flex gap-4 text-sm text-muted-foreground">
-                    <span>ID: {item.id}</span>
-                    <span>•</span>
                     <span>Reporter: {item.reporter}</span>
                     <span>•</span>
                     <span>{item.dateReported}</span>
@@ -84,9 +135,7 @@ const LostItemsTable = ({ searchQuery }: LostItemsTableProps) => {
                     <span>{item.location}</span>
                   </div>
                 </div>
-                <Button size="sm" variant="outline">
-                  View Details
-                </Button>
+                <div className="w-0" />
               </div>
             ))}
           </div>

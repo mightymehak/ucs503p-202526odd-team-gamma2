@@ -2,12 +2,17 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { fastApiService, StatusResponse, ComplaintItem } from '../services/fastApiService';
+import { addNotification } from '../utils/notifications';
+import { Bell } from 'lucide-react';
+import { Popover, PopoverContent, PopoverTrigger } from './ui/popover';
+import { Button } from './ui/button';
+import { Badge } from './ui/badge';
+import NotificationPanel from './admin/NotificationPanel';
 
 
 interface SummaryData {
   lost: number;
   matched: number;
-  resolved: number;
 }
 
 interface AddComplaintFormProps {
@@ -23,6 +28,7 @@ const AddComplaintForm: React.FC<AddComplaintFormProps> = ({ onClose, onSubmit, 
   const [photo, setPhoto] = useState<File | null>(null);
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string>("");
+  const { user } = useAuth();
 
   const handleSubmit = async () => {
     if (!itemName || !location || !photo) {
@@ -35,7 +41,7 @@ const AddComplaintForm: React.FC<AddComplaintFormProps> = ({ onClose, onSubmit, 
 
     try {
       // Submit to FastAPI backend for AI processing
-      const response = await fastApiService.submitComplaint(photo, location, itemName, dateFound || undefined);
+      const response = await fastApiService.submitComplaint(photo, location, itemName, dateFound || undefined, user?._id, user?.name);
       
       // Store complaint data for display
       const complaintData = { 
@@ -64,11 +70,17 @@ const AddComplaintForm: React.FC<AddComplaintFormProps> = ({ onClose, onSubmit, 
       }
       
       // Start status polling after a short delay to ensure complaint is saved
-      if (onStatusPolling) {
-        setTimeout(() => {
-          onStatusPolling(response.job_id, complaintData);
-        }, 500);
-      }
+          if (onStatusPolling) {
+            setTimeout(() => {
+              onStatusPolling(response.job_id, complaintData);
+            }, 500);
+          }
+          if (user && response.job_id) {
+            const key = `my_jobs:${user._id}`;
+            const existing = JSON.parse(localStorage.getItem(key) || '[]');
+            const updated = Array.from(new Set([response.job_id, ...existing]));
+            localStorage.setItem(key, JSON.stringify(updated));
+          }
     } catch (err: any) {
       setError(err.response?.data?.detail || err.message || 'Failed to submit complaint');
     } finally {
@@ -263,10 +275,10 @@ const StatusPollingModal: React.FC<StatusPollingModalProps> = ({ jobId, isOpen, 
 };
 
 const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout }) => {
-  const [activeTab, setActiveTab] = useState<'complaints' | 'matched' | 'resolved'>('complaints');
+  const [activeTab, setActiveTab] = useState<'complaints' | 'matched'>('complaints');
   const [showAddComplaint, setShowAddComplaint] = useState<boolean>(false);
   const [complaints, setComplaints] = useState<ComplaintItem[]>([]);
-  const [summaryData, setSummaryData] = useState<SummaryData>({ lost: 0, matched: 0, resolved: 0 });
+  const [summaryData, setSummaryData] = useState<SummaryData>({ lost: 0, matched: 0 });
   const [loading, setLoading] = useState<boolean>(true);
   
   // Status polling state
@@ -275,21 +287,133 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout }) => {
   const [pollingStatus, setPollingStatus] = useState<string>('pending');
   const [pollingResult, setPollingResult] = useState<StatusResponse | null>(null);
   const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const lastStatusesRef = useRef<Record<string, string>>({});
+  const pendingWatchRef = useRef<Record<string, NodeJS.Timeout>>({});
+  const pendingCyclesRef = useRef<number>(0);
+  const errorCyclesRef = useRef<number>(0);
 
   const { user } = useAuth();
+  const [unreadCount, setUnreadCount] = useState<number>(() => {
+    const saved = localStorage.getItem(`unreadNotificationCount:lost:${user?._id || 'anonymous'}`);
+    return saved !== null ? parseInt(saved, 10) : 0;
+  });
+
+  useEffect(() => {
+    const key = `unreadNotificationCount:lost:${user?._id || 'anonymous'}`;
+    localStorage.setItem(key, unreadCount.toString());
+  }, [unreadCount, user]);
+
+  useEffect(() => {
+    const syncUnread = () => {
+      const saved = localStorage.getItem(`unreadNotificationCount:lost:${user?._id || 'anonymous'}`);
+      const val = saved !== null ? parseInt(saved, 10) : 0;
+      setUnreadCount(val);
+    };
+    window.addEventListener('storage', syncUnread);
+    window.addEventListener(`localStorageUpdated:lost:${user?._id || 'anonymous'}`, syncUnread);
+    return () => {
+      window.removeEventListener('storage', syncUnread);
+      window.removeEventListener(`localStorageUpdated:lost:${user?._id || 'anonymous'}`, syncUnread);
+    };
+  }, [user]);
 
   const fetchData = async () => {
     try {
       setLoading(true);
       // Fetch complaints from FastAPI only
-      const complaintsData = await fastApiService.getUserComplaints();
+      const myIds = user && user._id ? JSON.parse(localStorage.getItem(`my_jobs:${user._id}`) || '[]') : [];
+      let complaintsData = await fastApiService.getUserComplaints(user?._id);
+      if (user && user._id) {
+        complaintsData = complaintsData.filter(c => c.user_id === user._id || (c.job_id && myIds.includes(c.job_id)));
+      }
+      if ((complaintsData.length === 0) && Array.isArray(myIds) && myIds.length > 0) {
+        const results = await Promise.allSettled(myIds.map(id => fastApiService.getComplaintById(id)));
+        const fetched: ComplaintItem[] = results
+          .map((r) => (r.status === 'fulfilled' ? r.value : null))
+          .filter((c): c is ComplaintItem => !!c);
+        complaintsData = fetched.filter(c => c && (!user || !user._id || c.user_id === user._id || myIds.includes(c.job_id)));
+        if (user && user._id) {
+          const key = `my_jobs:${user._id}`;
+          const missing: string[] = myIds.filter((_, idx) => {
+            const r = results[idx];
+            if (r.status === 'fulfilled') return r.value === null;
+            const anyR: any = r as any;
+            return !!(anyR?.reason?.response?.status === 404);
+          });
+          if (missing.length > 0) {
+            const updated = myIds.filter(id => !missing.includes(id));
+            localStorage.setItem(key, JSON.stringify(updated));
+          }
+        }
+      }
+      const prevStatuses = lastStatusesRef.current;
+      const nextStatuses: Record<string, string> = {};
+      for (const c of complaintsData) {
+        nextStatuses[c.job_id] = c.status;
+      }
+      for (const c of complaintsData) {
+        const prev = prevStatuses[c.job_id];
+        const next = c.status;
+        if (prev && next && prev !== next && next !== 'pending') {
+          const label = next === 'matched' || next === 'high_confidence'
+            ? 'Matched'
+            : next === 'medium_confidence'
+            ? 'Potential Match'
+            : next === 'no_match'
+            ? 'No Match'
+            : next;
+          addNotification(
+            'Item Status Updated',
+            `${c.itemName || 'Item'} is now ${label}`,
+            next === 'matched' || next === 'high_confidence' ? 'success' : next === 'no_match' ? 'info' : 'warning',
+            'lost',
+            user?._id
+          );
+        }
+      }
+      lastStatusesRef.current = nextStatuses;
       setComplaints(complaintsData);
+
+      // Start watchers for pending items; update UI only when status changes
+      for (const c of complaintsData) {
+        if (c.status === 'pending' && c.job_id && !pendingWatchRef.current[c.job_id]) {
+          pendingWatchRef.current[c.job_id] = setInterval(async () => {
+            try {
+              const res = await fastApiService.checkStatus(c.job_id);
+              if (res.status && res.status !== 'pending') {
+                setComplaints(prev => prev.map(item => (
+                  item.job_id === c.job_id
+                    ? { ...item, status: res.status as any, matches: res.matches || [], message: res.message || item.message }
+                    : item
+                )));
+                clearInterval(pendingWatchRef.current[c.job_id]);
+                delete pendingWatchRef.current[c.job_id];
+                const label = (res.status === 'matched' || res.status === 'high_confidence')
+                  ? 'Matched'
+                  : res.status === 'medium_confidence'
+                  ? 'Potential Match'
+                  : res.status === 'no_match'
+                  ? 'No Match'
+                  : res.status || 'Updated';
+                addNotification(
+                  'Item Status Updated',
+                  `${c.itemName || 'Item'} is now ${label}`,
+                  res.status === 'matched' || res.status === 'high_confidence' ? 'success' : res.status === 'no_match' ? 'info' : 'warning',
+                  'lost',
+                  user?._id
+                );
+              }
+            } catch {
+              // ignore transient errors
+            }
+          }, 6000);
+        }
+      }
       
       // Calculate stats from complaints
       const stats = {
         lost: complaintsData.length,
         matched: complaintsData.filter(c => c.status === 'matched').length,
-        resolved: 0, // No resolved status in FastAPI for now
       };
       setSummaryData(stats);
     } catch (error) {
@@ -301,7 +425,11 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout }) => {
 
   useEffect(() => {
     fetchData();
-  }, []);
+    return () => {
+      Object.values(pendingWatchRef.current).forEach(clearInterval);
+      pendingWatchRef.current = {};
+    };
+  }, [user]);
 
   // Cleanup polling on unmount
   useEffect(() => {
@@ -318,6 +446,8 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout }) => {
     setStatusModalOpen(true);
     setPollingStatus('pending');
     setPollingResult(null);
+    pendingCyclesRef.current = 0;
+    errorCyclesRef.current = 0;
 
     // Refresh dashboard to show the complaint immediately (with pending status)
     fetchData();
@@ -329,6 +459,14 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout }) => {
         
         if (statusResponse.status === 'pending') {
           setPollingStatus('pending');
+          pendingCyclesRef.current += 1;
+          if (pendingCyclesRef.current >= 5) {
+            if (pollingIntervalRef.current) {
+              clearInterval(pollingIntervalRef.current);
+              pollingIntervalRef.current = null;
+            }
+            setStatusModalOpen(false);
+          }
           // Keep polling - complaint should already be visible on dashboard with pending status
         } else if (statusResponse.status === 'matched' || 
                    statusResponse.status === 'high_confidence' || 
@@ -347,6 +485,21 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout }) => {
 
           // Refresh dashboard data to update complaint status
           fetchData();
+          const finalStatus = statusResponse.status;
+          const label = (finalStatus === 'matched' || finalStatus === 'high_confidence')
+            ? 'Matched'
+            : finalStatus === 'medium_confidence'
+            ? 'Potential Match'
+            : finalStatus === 'no_match'
+            ? 'No Match'
+            : finalStatus || 'Updated';
+          addNotification(
+            'Item Status Updated',
+            `Your complaint ${complaintData.itemName || 'Item'} is now ${label}`,
+            finalStatus === 'matched' || finalStatus === 'high_confidence' ? 'success' : finalStatus === 'no_match' ? 'info' : 'warning',
+            'lost',
+            user?._id
+          );
         } else {
           // Error or unknown status
           setPollingStatus('error');
@@ -359,10 +512,16 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout }) => {
         }
       } catch (error) {
         console.error('Error checking status:', error);
-        // On error, keep modal open but show error state
-        // Don't stop polling completely - might be temporary network issue
         setPollingStatus('error');
         setPollingResult({ status: 'error', message: 'Failed to check status. Will keep trying...' });
+        errorCyclesRef.current += 1;
+        if (errorCyclesRef.current >= 3) {
+          if (pollingIntervalRef.current) {
+            clearInterval(pollingIntervalRef.current);
+            pollingIntervalRef.current = null;
+          }
+          setStatusModalOpen(false);
+        }
       }
     }, 4000);
   };
@@ -382,11 +541,19 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout }) => {
   const handleDeleteComplaint = async (jobId: string) => {
     if (window.confirm('Are you sure you want to delete this complaint?')) {
       try {
-        // Note: FastAPI doesn't have delete endpoint yet
-        // For now, just remove from local state
-        // You can add a delete endpoint in FastAPI if needed
+        await fastApiService.deleteComplaint(jobId);
         setComplaints(prev => prev.filter(c => c.job_id !== jobId));
-        alert('Complaint removed from view. Note: This does not remove it from FAISS database.');
+        if (user && user._id) {
+          const key = `my_jobs:${user._id}`;
+          const existing = JSON.parse(localStorage.getItem(key) || '[]');
+          const updated = existing.filter((id: string) => id !== jobId);
+          localStorage.setItem(key, JSON.stringify(updated));
+        }
+        // Stop any pending watcher for this job
+        if (pendingWatchRef.current[jobId]) {
+          clearInterval(pendingWatchRef.current[jobId]);
+          delete pendingWatchRef.current[jobId];
+        }
       } catch (error) {
         console.error('Failed to delete complaint:', error);
         alert('Failed to delete complaint');
@@ -395,7 +562,7 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout }) => {
   };
 
   const matchedItems = complaints.filter(item => item.status === 'matched');
-  const resolvedItems: ComplaintItem[] = []; // No resolved status in FastAPI for now
+  
   // Show all complaints in "My Complaints" tab
   const allComplaints = complaints;
 
@@ -425,21 +592,26 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout }) => {
       <nav className="bg-white shadow p-4 flex justify-between items-center">
         <h1 className="text-xl font-bold">Lost & Found</h1>
         <div className="flex items-center space-x-4">
-          <input
-            type="text"
-            placeholder="Search complaints..."
-            className="border rounded px-2 py-1"
-          />
-          <div className="relative">
-            <button className="relative">
-              🔔
-              {matchedItems.length > 0 && (
-                <span className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full w-4 h-4 flex items-center justify-center text-xs">
-                  {matchedItems.length}
-                </span>
-              )}
-            </button>
-          </div>
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button variant="ghost" size="icon" className="relative">
+                <Bell className="h-5 w-5" />
+                {unreadCount > 0 && (
+                  <Badge className="absolute -top-1 -right-1 h-5 w-5 p-0 flex items-center justify-center text-xs bg-destructive text-destructive-foreground">
+                    {unreadCount}
+                  </Badge>
+                )}
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent className="w-auto p-0" align="end">
+              <NotificationPanel
+                onNotificationRead={() => setUnreadCount((c) => Math.max(0, c - 1))}
+                onMarkAllAsRead={() => setUnreadCount(0)}
+                userId={user?._id || 'anonymous'}
+                category="lost"
+              />
+            </PopoverContent>
+          </Popover>
           <span className="text-sm">{user?.name} ({user?.email})</span>
           <button
             onClick={onLogout}
@@ -451,7 +623,7 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout }) => {
       </nav>
 
       {/* Summary Cards */}
-      <div className="grid grid-cols-3 gap-4 p-4">
+      <div className="grid grid-cols-2 gap-4 p-4">
         <div className="bg-white p-4 rounded shadow">
           <h2 className="text-gray-500">My Lost Items</h2>
           <p className="text-2xl font-bold">{summaryData.lost}</p>
@@ -459,10 +631,6 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout }) => {
         <div className="bg-white p-4 rounded shadow">
           <h2 className="text-gray-500">Matched Items</h2>
           <p className="text-2xl font-bold">{summaryData.matched}</p>
-        </div>
-        <div className="bg-white p-4 rounded shadow">
-          <h2 className="text-gray-500">Resolved Cases</h2>
-          <p className="text-2xl font-bold">{summaryData.resolved}</p>
         </div>
       </div>
 
@@ -484,12 +652,6 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout }) => {
             onClick={() => setActiveTab('matched')}
           >
             Matched Items ({matchedItems.length})
-          </button>
-          <button
-            className={`px-4 py-2 ${activeTab === 'resolved' ? 'border-b-2 border-blue-500 font-bold' : ''}`}
-            onClick={() => setActiveTab('resolved')}
-          >
-            Resolved Cases ({resolvedItems.length})
           </button>
         </div>
 
@@ -612,38 +774,12 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout }) => {
                         </div>
                       )}
                     </div>
-                    <button className="bg-green-500 text-white px-3 py-1 rounded text-sm hover:bg-green-600">
-                      View Details
-                    </button>
                   </div>
                 ))
               )}
             </div>
           )}
 
-          {activeTab === 'resolved' && (
-            <div className="space-y-2">
-              {resolvedItems.length === 0 ? (
-                <p className="text-gray-500 text-center py-8">No resolved cases</p>
-              ) : (
-                resolvedItems.map(item => (
-                  <div key={item.job_id} className="bg-white p-4 rounded shadow">
-                    <div className="flex items-center gap-2 mb-1">
-                      <span className="font-semibold">{item.itemName || 'Unnamed Item'}</span>
-                      <span className="text-xs bg-green-100 text-green-800 px-2 py-1 rounded">Resolved ✓</span>
-                    </div>
-                    <p className="text-sm text-gray-600">
-                      <span className="font-medium">Location:</span> {item.location} • 
-                      <span className="font-medium ml-2">Date:</span> {item.date ? new Date(item.date).toLocaleDateString() : 'N/A'}
-                    </p>
-                    {item.message && (
-                      <p className="text-xs text-gray-500 mt-1">{item.message}</p>
-                    )}
-                  </div>
-                ))
-              )}
-            </div>
-          )}
         </div>
       </div>
 
@@ -651,9 +787,24 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout }) => {
       {showAddComplaint && (
         <AddComplaintForm
           onClose={() => setShowAddComplaint(false)}
-          onSubmit={async () => {
+          onSubmit={async (complaintData) => {
             setShowAddComplaint(false);
-            // Refresh data to show the newly created complaint
+            // Optimistically add pending item
+            if (complaintData && complaintData.jobId) {
+              const optimistic: ComplaintItem = {
+                job_id: complaintData.jobId!,
+                itemName: complaintData.itemName,
+                location: complaintData.location,
+                date: complaintData.dateFound,
+                type: 'lost_report',
+                timestamp: Date.now(),
+                status: 'pending',
+                message: 'Processing...',
+                user_id: user?._id,
+              };
+              setComplaints(prev => [optimistic, ...prev]);
+            }
+            // Also refresh from backend to sync
             await fetchData();
           }}
           onStatusPolling={handleStatusPolling}

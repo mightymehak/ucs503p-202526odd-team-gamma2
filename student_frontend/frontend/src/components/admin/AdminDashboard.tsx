@@ -12,6 +12,7 @@ import LostItemsTable from "./LostItemsTable";
 import NotificationPanel from "./NotificationPanel";
 import UserProfileDropdown from "./UserProfileDropdown";
 import { Toaster } from "../ui/sonner";
+import { useAuth } from "../../context/AuthContext";
 
 interface AdminDashboardProps {
   onLogout: () => void;
@@ -22,16 +23,18 @@ const AdminDashboard = ({ onLogout }: AdminDashboardProps) => {
   const [activeTab, setActiveTab] = useState("claims");
   const tabsRef = useRef<HTMLDivElement>(null);
   
+  const { user } = useAuth();
+  const adminUserId = user?._id || "admin";
   // Initialize unread count from localStorage
   const [unreadCount, setUnreadCount] = useState(() => {
-    const saved = localStorage.getItem('unreadNotificationCount');
+    const saved = localStorage.getItem(`unreadNotificationCount:found:${adminUserId}`);
     return saved !== null ? parseInt(saved, 10) : 0;
   });
 
   // Save unread count to localStorage whenever it changes
   useEffect(() => {
-    localStorage.setItem('unreadNotificationCount', unreadCount.toString());
-  }, [unreadCount]);
+    localStorage.setItem(`unreadNotificationCount:found:${adminUserId}`, unreadCount.toString());
+  }, [unreadCount, adminUserId]);
 
   const scrollToTabs = () => {
     tabsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -88,6 +91,8 @@ const AdminDashboard = ({ onLogout }: AdminDashboardProps) => {
                   <NotificationPanel 
                     onNotificationRead={handleNotificationRead}
                     onMarkAllAsRead={handleMarkAllAsRead}
+                    userId={adminUserId}
+                    category="found"
                   />
                 </PopoverContent>
               </Popover>

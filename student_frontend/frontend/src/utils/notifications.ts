@@ -5,18 +5,40 @@ interface Notification {
   time: string;
   read: boolean;
   type: "success" | "warning" | "info";
+  category: "lost" | "found";
 }
+
+const resolveUserId = (explicit?: string) => {
+  if (explicit) return explicit;
+  try {
+    const token = localStorage.getItem('token');
+    if (!token) return 'anonymous';
+    const seg = token.split('.')[1];
+    const payload = JSON.parse(atob(seg.replace(/-/g, '+').replace(/_/g, '/')));
+    return payload.id || payload.user_id || payload._id || 'anonymous';
+  } catch {
+    return 'anonymous';
+  }
+};
+
+const makeKeys = (category: "lost" | "found", userId: string) => ({
+  listKey: `notifications:${category}:${userId}`,
+  countKey: `unreadNotificationCount:${category}:${userId}`,
+  eventKey: `localStorageUpdated:${category}:${userId}`,
+});
 
 export const addNotification = (
   title: string,
   message: string,
-  type: "success" | "warning" | "info" = "info"
+  type: "success" | "warning" | "info" = "info",
+  category: "lost" | "found" = "lost",
+  userId?: string
 ) => {
-  // Get existing notifications
-  const saved = localStorage.getItem('notifications');
+  const uid = resolveUserId(userId);
+  const { listKey, countKey, eventKey } = makeKeys(category, uid);
+
+  const saved = localStorage.getItem(listKey);
   const notifications: Notification[] = saved !== null ? JSON.parse(saved) : [];
-  
-  // Create new notification
   const newNotification: Notification = {
     id: Date.now(),
     title,
@@ -24,21 +46,29 @@ export const addNotification = (
     time: "Just now",
     read: false,
     type,
+    category,
   };
-  
-  // Add to beginning of array
   const updatedNotifications = [newNotification, ...notifications];
-  
-  // Save back to localStorage
-  localStorage.setItem('notifications', JSON.stringify(updatedNotifications));
-  
-  // Update unread count
-  const currentCount = parseInt(localStorage.getItem('unreadNotificationCount') || '0', 10);
-  localStorage.setItem('unreadNotificationCount', (currentCount + 1).toString());
-  
-  // Trigger custom event for same-tab updates
-  window.dispatchEvent(new CustomEvent('localStorageUpdated'));
-  
+  localStorage.setItem(listKey, JSON.stringify(updatedNotifications));
+  const currentCount = parseInt(localStorage.getItem(countKey) || '0', 10);
+  localStorage.setItem(countKey, (currentCount + 1).toString());
+  window.dispatchEvent(new CustomEvent(eventKey));
   return newNotification;
+};
+
+export const getNotifications = (category: "lost" | "found", userId: string): Notification[] => {
+  const { listKey } = makeKeys(category, userId);
+  const saved = localStorage.getItem(listKey);
+  return saved !== null ? JSON.parse(saved) : [];
+};
+
+export const markAllRead = (category: "lost" | "found", userId: string) => {
+  const { listKey, countKey, eventKey } = makeKeys(category, userId);
+  const saved = localStorage.getItem(listKey);
+  const notifications: Notification[] = saved !== null ? JSON.parse(saved) : [];
+  const updated = notifications.map(n => ({ ...n, read: true }));
+  localStorage.setItem(listKey, JSON.stringify(updated));
+  localStorage.setItem(countKey, '0');
+  window.dispatchEvent(new CustomEvent(eventKey));
 };
 

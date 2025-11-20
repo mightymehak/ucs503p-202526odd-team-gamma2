@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { fastApiService, StatusResponse, MatchResult } from "../../services/fastApiService";
+import { fastApiService, StatusResponse, MatchResult, ComplaintItem } from "../../services/fastApiService";
 import { Card, CardContent, CardHeader, CardTitle } from "../ui/card";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
@@ -34,6 +34,8 @@ interface FoundItem {
   aiConfidence: number;
   description?: string;
   category?: string;
+  jobId?: string;
+  photoUrl?: string;
 }
 
 const FoundItemsTable = ({ searchQuery, onNewItem }: FoundItemsTableProps) => {
@@ -57,6 +59,87 @@ const FoundItemsTable = ({ searchQuery, onNewItem }: FoundItemsTableProps) => {
     window.dispatchEvent(new Event('statsUpdate'));
   }, [items]);
 
+  useEffect(() => {
+    const fetchFound = async () => {
+      try {
+        const found = await fastApiService.getAdminFoundItems();
+        const mapped: FoundItem[] = found.map((c: ComplaintItem) => {
+          const matchCount = Array.isArray(c.matches) ? c.matches.length : 0;
+          const status = c.status || (matchCount > 0 ? 'matched' : 'pending');
+          const aiConfidence = matchCount > 0 ? Math.round(c.matches![0].score * 100) : 0;
+          return {
+            id: c.job_id || generateId(),
+            name: c.itemName || 'Item',
+            location: c.location || '',
+            date: c.date || new Date(c.timestamp * 1000).toISOString().split('T')[0],
+            status,
+            matchCount,
+            aiMatch: matchCount > 0 ? 'Matched' : 'None',
+            aiConfidence,
+            description: c.message,
+            category: undefined,
+            jobId: c.job_id,
+            photoUrl: c.job_id ? fastApiService.getImageUrl(c.job_id) : undefined,
+          };
+        });
+        // Reconcile using lost-items FAISS: if any lost report matches reference a found jobId, mark that found item matched
+        try {
+          const lostFaiss = await fastApiService.getAdminLostItemsFaiss();
+          const matchedFoundIds = new Set<string>();
+          for (const l of lostFaiss) {
+            const ls = (l as any).status;
+            const ms = (l as any).matches;
+            if (ls === 'matched' && Array.isArray(ms)) {
+              for (const m of ms) {
+                const meta = m && (m as any).meta;
+                const fid = meta && meta.job_id;
+                if (fid) matchedFoundIds.add(fid);
+              }
+            }
+          }
+          const reconciled = mapped.map(it => matchedFoundIds.has(it.jobId || '')
+            ? { ...it, status: 'matched', aiMatch: 'Matched', matchCount: Math.max(it.matchCount, 1) }
+            : it);
+          setItems(reconciled);
+        } catch {
+          setItems(mapped);
+        }
+        mapped.forEach((it) => {
+          const jid = it.jobId;
+          if ((it.status === 'pending' || it.status === 'unclaimed' || !it.status) && jid && !pendingWatchRef.current[jid]) {
+            pendingWatchRef.current[jid] = setInterval(async () => {
+              try {
+                const res = await fastApiService.checkStatus(jid);
+                if (res.status && res.status !== 'pending') {
+                  setItems(prev => prev.map(item => (
+                    item.jobId === jid
+                      ? {
+                          ...item,
+                          status: 'matched',
+                          matchCount: Array.isArray(res.matches) ? res.matches.length : item.matchCount,
+                          aiMatch: 'Matched',
+                          aiConfidence: Array.isArray(res.matches) && res.matches.length > 0 ? Math.round((res.matches[0] as any).score * 100) : item.aiConfidence,
+                        }
+                      : item
+                  )));
+                  clearInterval(pendingWatchRef.current[jid]);
+                  delete pendingWatchRef.current[jid];
+                }
+              } catch {}
+            }, 6000);
+          }
+        });
+      } catch {
+        // keep local storage items if backend not available
+      }
+    };
+    fetchFound();
+    return () => {
+      Object.values(pendingWatchRef.current).forEach(clearInterval);
+      pendingWatchRef.current = {};
+    };
+  }, []);
+
   const [viewDialogOpen, setViewDialogOpen] = useState(false);
   const [addDialogOpen, setAddDialogOpen] = useState(false);
   const [selectedItem, setSelectedItem] = useState<FoundItem | null>(null);
@@ -67,13 +150,14 @@ const FoundItemsTable = ({ searchQuery, onNewItem }: FoundItemsTableProps) => {
   const [pollingStatus, setPollingStatus] = useState<string>('pending');
   const [pollingResult, setPollingResult] = useState<StatusResponse | null>(null);
   const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const pendingCyclesRef = useRef<number>(0);
+  const errorCyclesRef = useRef<number>(0);
+  const pendingWatchRef = useRef<Record<string, NodeJS.Timeout>>({});
   
   const [newItem, setNewItem] = useState({
     name: "",
-    category: "",
     location: "",
     date: "",
-    description: "",
     photo: null as File | null,
   });
 
@@ -143,8 +227,8 @@ const FoundItemsTable = ({ searchQuery, onNewItem }: FoundItemsTableProps) => {
         matchCount: 0,
         aiMatch: "None",
         aiConfidence: 0,
-        description: newItem.description,
-        category: newItem.category,
+        jobId: response.job_id,
+        photoUrl: newItem.photo ? URL.createObjectURL(newItem.photo) : undefined,
       };
 
       setItems(prevItems => [...prevItems, itemToAdd]);
@@ -152,7 +236,8 @@ const FoundItemsTable = ({ searchQuery, onNewItem }: FoundItemsTableProps) => {
       addNotification(
         "New Found Item Added",
         `${newItem.name || 'Item'} was added at ${newItem.location}`,
-        "success"
+        "success",
+        "found"
       );
       
       if (onNewItem) {
@@ -162,10 +247,8 @@ const FoundItemsTable = ({ searchQuery, onNewItem }: FoundItemsTableProps) => {
       // Reset form and close dialog
       setNewItem({
         name: "",
-        category: "",
         location: "",
         date: "",
-        description: "",
         photo: null,
       });
       setAddDialogOpen(false);
@@ -202,7 +285,14 @@ const FoundItemsTable = ({ searchQuery, onNewItem }: FoundItemsTableProps) => {
         
         if (statusResponse.status === 'pending') {
           setPollingStatus('pending');
-          // Keep polling
+          pendingCyclesRef.current += 1;
+          if (pendingCyclesRef.current >= 5) {
+            if (pollingIntervalRef.current) {
+              clearInterval(pollingIntervalRef.current);
+              pollingIntervalRef.current = null;
+            }
+            setStatusModalOpen(false);
+          }
         } else if (statusResponse.status === 'high_confidence' || 
                    statusResponse.status === 'medium_confidence' || 
                    statusResponse.status === 'no_match') {
@@ -245,6 +335,14 @@ const FoundItemsTable = ({ searchQuery, onNewItem }: FoundItemsTableProps) => {
           // Error or unknown status
           setPollingStatus('error');
           setPollingResult(statusResponse);
+          errorCyclesRef.current += 1;
+          if (errorCyclesRef.current >= 1) {
+            if (pollingIntervalRef.current) {
+              clearInterval(pollingIntervalRef.current);
+              pollingIntervalRef.current = null;
+            }
+            setStatusModalOpen(false);
+          }
           
           if (pollingIntervalRef.current) {
             clearInterval(pollingIntervalRef.current);
@@ -255,6 +353,14 @@ const FoundItemsTable = ({ searchQuery, onNewItem }: FoundItemsTableProps) => {
         console.error('Error checking status:', error);
         setPollingStatus('error');
         setPollingResult({ status: 'error', message: 'Failed to check status' });
+        errorCyclesRef.current += 1;
+        if (errorCyclesRef.current >= 1) {
+          if (pollingIntervalRef.current) {
+            clearInterval(pollingIntervalRef.current);
+            pollingIntervalRef.current = null;
+          }
+          setStatusModalOpen(false);
+        }
         
         if (pollingIntervalRef.current) {
           clearInterval(pollingIntervalRef.current);
@@ -292,46 +398,49 @@ const FoundItemsTable = ({ searchQuery, onNewItem }: FoundItemsTableProps) => {
             <div className="text-center py-12">
               <Package className="h-16 w-16 mx-auto text-muted-foreground/50 mb-4" />
               <p className="text-lg font-medium text-muted-foreground mb-2">No found items yet</p>
-              <p className="text-sm text-muted-foreground mb-4">Start by adding your first found item</p>
-              <Button onClick={openAddDialog}>
-                <Plus className="h-4 w-4 mr-2" />
-                Add Found Item
-              </Button>
+              <p className="text-sm text-muted-foreground">Start by adding your first found item</p>
             </div>
           ) : (
-            <div className="space-y-4">
-              {filteredItems.map((item) => (
-                <div
-                  key={item.id}
-                  className="flex items-center justify-between p-4 border rounded-lg hover:bg-muted/50 transition-colors"
-                >
-                  <div className="flex-1">
-                    <div className="flex items-center gap-3">
-                      <h4 className="font-semibold text-foreground">{item.name}</h4>
-                      {getStatusBadge(item.status, item.matchCount)}
-                      <Badge variant="outline" className="gap-1">
-                        <Sparkles className="h-3 w-3" />
-                        AI: {item.aiMatch}
-                      </Badge>
-                    </div>
-                    <div className="mt-2 flex gap-4 text-sm text-muted-foreground">
-                      <span className="flex items-center gap-1">
-                        <MapPin className="h-3 w-3" />
-                        {item.location}
-                      </span>
-                      <span className="flex items-center gap-1">
-                        <Calendar className="h-3 w-3" />
-                        {item.date}
-                      </span>
-                      <span>ID: {item.id}</span>
-                      {item.aiConfidence > 0 && (
-                        <span className="flex items-center gap-1">
-                          <Sparkles className="h-3 w-3" />
-                          {item.aiConfidence}% Match
-                        </span>
-                      )}
-                    </div>
+          <div className="space-y-4">
+            {filteredItems.map((item) => (
+              <div
+                key={item.id}
+                className="flex items-center justify-between p-4 border rounded-lg hover:bg-muted/50 transition-colors"
+              >
+                <div className="flex items-center gap-4 flex-1">
+                  <img
+                    src={item.photoUrl || (item.jobId ? fastApiService.getImageUrl(item.jobId) : undefined)}
+                    alt={item.name}
+                    className="w-16 h-16 object-cover rounded-md border"
+                    onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }}
+                  />
+                  <div className="flex items-center gap-3">
+                    <h4 className="font-semibold text-foreground">{item.name}</h4>
+                    {getStatusBadge(item.status, item.matchCount)}
+                    <Badge variant="outline" className="gap-1">
+                      <Sparkles className="h-3 w-3" />
+                      AI: {item.aiMatch}
+                    </Badge>
                   </div>
+                  <div className="mt-2 flex gap-4 text-sm text-muted-foreground">
+                    <span className="flex items-center gap-1">
+                      <MapPin className="h-3 w-3" />
+                      {item.location}
+                    </span>
+                    <span className="flex items-center gap-1">
+                      <Calendar className="h-3 w-3" />
+                      {item.date}
+                    </span>
+                    <span>ID: {item.id}</span>
+                    {item.aiConfidence > 0 && (
+                      <span className="flex items-center gap-1">
+                        <Sparkles className="h-3 w-3" />
+                        {item.aiConfidence}% Match
+                      </span>
+                    )}
+                  </div>
+                </div>
+                <div className="flex gap-2">
                   <Button
                     size="sm"
                     variant="outline"
@@ -339,8 +448,30 @@ const FoundItemsTable = ({ searchQuery, onNewItem }: FoundItemsTableProps) => {
                   >
                     View Details
                   </Button>
+                  {item.jobId && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={async () => {
+                        try {
+                          const res = await fastApiService.deleteFoundItem(item.jobId!);
+                          setItems(prev => prev.filter(i => i.jobId !== item.jobId));
+                          if (pendingWatchRef.current[item.jobId!]) {
+                            clearInterval(pendingWatchRef.current[item.jobId!]);
+                            delete pendingWatchRef.current[item.jobId!];
+                          }
+                          toast.success("Item resolved", { description: `Removed ${item.name}` });
+                        } catch (error: any) {
+                          toast.error("Failed to resolve item", { description: error.response?.data?.detail || error.message });
+                        }
+                      }}
+                    >
+                      Resolved
+                    </Button>
+                  )}
                 </div>
-              ))}
+              </div>
+            ))}
             </div>
           )}
         </CardContent>
@@ -369,10 +500,7 @@ const FoundItemsTable = ({ searchQuery, onNewItem }: FoundItemsTableProps) => {
                   <p className="text-base">{selectedItem.id}</p>
                 </div>
 
-                <div>
-                  <p className="text-sm font-medium text-muted-foreground">Category</p>
-                  <p className="text-base">{selectedItem.category || "N/A"}</p>
-                </div>
+                {/* removed Category display */}
 
                 <div>
                   <p className="text-sm font-medium text-muted-foreground">Date Found</p>
@@ -408,12 +536,7 @@ const FoundItemsTable = ({ searchQuery, onNewItem }: FoundItemsTableProps) => {
                   </div>
                 )}
 
-                <div className="col-span-2">
-                  <p className="text-sm font-medium text-muted-foreground">Description</p>
-                  <p className="text-base mt-1">
-                    {selectedItem.description || "No description provided"}
-                  </p>
-                </div>
+                {/* removed Description display */}
               </div>
             </div>
           )}
@@ -445,15 +568,7 @@ const FoundItemsTable = ({ searchQuery, onNewItem }: FoundItemsTableProps) => {
                 />
               </div>
 
-              <div className="space-y-2">
-                <Label htmlFor="item-category">Item Type/Category</Label>
-                <Input
-                  id="item-category"
-                  placeholder="e.g., Bags, Electronics"
-                  value={newItem.category}
-                  onChange={(e) => setNewItem({ ...newItem, category: e.target.value })}
-                />
-              </div>
+              {/* removed Item Type/Category field */}
 
               <div className="space-y-2">
                 <Label htmlFor="item-location">
@@ -500,19 +615,7 @@ const FoundItemsTable = ({ searchQuery, onNewItem }: FoundItemsTableProps) => {
               </p>
             </div>
 
-            <div className="space-y-2">
-              <Label htmlFor="item-description">Description</Label>
-              <Textarea
-                id="item-description"
-                placeholder="Provide a detailed description of the item (color, size, brand, condition, etc.)"
-                rows={4}
-                value={newItem.description}
-                onChange={(e) => setNewItem({ ...newItem, description: e.target.value })}
-              />
-              <p className="text-xs text-muted-foreground">
-                Include any distinguishing features to help with matching
-              </p>
-            </div>
+            {/* removed Description field */}
           </div>
 
           <DialogFooter>
@@ -522,10 +625,8 @@ const FoundItemsTable = ({ searchQuery, onNewItem }: FoundItemsTableProps) => {
                 setAddDialogOpen(false);
                 setNewItem({
                   name: "",
-                  category: "",
                   location: "",
                   date: "",
-                  description: "",
                   photo: null,
                 });
               }}
