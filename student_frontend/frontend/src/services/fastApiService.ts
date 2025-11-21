@@ -24,9 +24,8 @@ const fastApi: AxiosInstance = axios.create({
 fastApi.interceptors.request.use(
   (config: InternalAxiosRequestConfig) => {
     const token = localStorage.getItem('token');
-    const url = (config.url || '').toLowerCase();
     const method = (config.method || 'get').toLowerCase();
-    const needsAuth = method !== 'get' || url.startsWith('/admin') || url.startsWith('/user');
+    const needsAuth = method !== 'get';
     if (token && needsAuth && config.headers) {
       config.headers.Authorization = `Bearer ${token}`;
     }
