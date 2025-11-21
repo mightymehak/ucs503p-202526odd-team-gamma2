@@ -1,6 +1,6 @@
 import time
 from app.queue_config import dequeue_job, r
-from app.embedding import get_image_embedding_from_base64
+from app.embedding import get_image_embedding_from_base64, get_image_embeddings_variants_from_base64
 from app.faiss_db import FaissImageDB
 import json
 import traceback
@@ -42,9 +42,8 @@ while True:
         itemName = job.get("itemName", "Unnamed Item")
         job_type = job.get("type", "")
 
-        # Get embedding from in-memory base64 image
-        embedding = get_image_embedding_from_base64(image_b64)
-        print(f"Generated embedding for job {job['job_id']}")
+        embeds = get_image_embeddings_variants_from_base64(image_b64)
+        print(f"Generated embeddings for job {job['job_id']}")
 
         if job_type == "user_complaint":
             search_target_type = "found_report"
@@ -54,7 +53,20 @@ while True:
             search_target_type = None
 
         if search_target_type:
-            matches = db.query(embedding, search_type=search_target_type, k=5, query_location=location)
+            all_matches = []
+            for e in embeds:
+                m = db.query(e, search_type=search_target_type, k=5, query_location=location)
+                all_matches.extend(m)
+            collapsed = {}
+            for m in all_matches:
+                meta = m.get("meta", {})
+                jid = meta.get("job_id")
+                if not jid:
+                    continue
+                prev = collapsed.get(jid)
+                if not prev or m["score"] > prev["score"]:
+                    collapsed[jid] = m
+            matches = list(collapsed.values())
             high_conf, med_conf = db.get_best_matches(matches)
         else:
             high_conf, med_conf = [], []
@@ -68,17 +80,19 @@ while True:
                 "message": "Match found! Please report to Lost & Found department.",
             }
             # Still add to database even if matched
-            metadata = {
-                "job_id": job["job_id"],
-                "location": location,
-                "date": date,
-                "itemName": itemName,
-                "type": "lost_report" if job_type == "user_complaint" else "found_report",
-                "user_id": job.get("user_id"),
-                "user_name": job.get("user_name"),
-                "timestamp": job.get("timestamp", time.time())
-            }
-            db.add_embedding(embedding, metadata)
+            for idx, embedding in enumerate(embeds):
+                metadata = {
+                    "job_id": job["job_id"],
+                    "location": location,
+                    "date": date,
+                    "itemName": itemName,
+                    "type": "lost_report" if job_type == "user_complaint" else "found_report",
+                    "user_id": job.get("user_id"),
+                    "user_name": job.get("user_name"),
+                    "timestamp": job.get("timestamp", time.time()),
+                    "exemplar": idx,
+                }
+                db.add_embedding(embedding, metadata)
             db.save(DB_INDEX_PATH, DB_METADATA_PATH)
             # If this is a user complaint, propagate match to corresponding found items
             if job_type == "user_complaint":
@@ -246,17 +260,19 @@ while True:
 
         else:
             # Add the job as lost or found, depending on its type
-            metadata = {
-                "job_id": job["job_id"],  # Store job_id for tracking
-                "location": location,
-                "date": date,
-                "itemName": itemName,
-                "type": "lost_report" if job_type == "user_complaint" else "found_report",
-                "user_id": job.get("user_id"),
-                "user_name": job.get("user_name"),
-                "timestamp": job.get("timestamp", time.time())
-            }
-            db.add_embedding(embedding, metadata)
+            for idx, embedding in enumerate(embeds):
+                metadata = {
+                    "job_id": job["job_id"],
+                    "location": location,
+                    "date": date,
+                    "itemName": itemName,
+                    "type": "lost_report" if job_type == "user_complaint" else "found_report",
+                    "user_id": job.get("user_id"),
+                    "user_name": job.get("user_name"),
+                    "timestamp": job.get("timestamp", time.time()),
+                    "exemplar": idx,
+                }
+                db.add_embedding(embedding, metadata)
             db.save(DB_INDEX_PATH, DB_METADATA_PATH)
             result = {
                 "status": "no_match",

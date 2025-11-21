@@ -19,12 +19,12 @@ class FaissImageDB:
 
     def location_similarity(self, loc1, loc2):
         if not loc1 or not loc2:
-            return 0.5
+            return 0.7
         a = str(loc1).strip().lower()
         b = str(loc2).strip().lower()
         if a == b:
             return 1.0
-        return 0.5
+        return 0.7
 
     def query(self, embedding, search_type, k=5, query_location=None, w_embed=0.9, w_loc=0.1):
         # search_type: "lost_report" for admin/found, "found_report" for user/complaint

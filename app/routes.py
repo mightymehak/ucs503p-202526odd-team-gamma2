@@ -250,12 +250,16 @@ async def admin_list_lost_items_faiss():
             matched_lost_ids = set()
         with open(meta_path, "rb") as f:
             metadata = pickle.load(f)
+        seen = set()
         for m in metadata:
             if not isinstance(m, dict):
                 continue
             if m.get("type") != "lost_report":
                 continue
             job_id = m.get("job_id")
+            if job_id in seen:
+                continue
+            seen.add(job_id)
             job_info_str = r.get(f"job:{job_id}") if job_id else None
             if not job_info_str:
                 # Skip entries that have been removed from Redis
@@ -345,7 +349,10 @@ async def get_user_complaints(authorization: Optional[str] = Header(None), userI
                     result = json.loads(result_str)
                     job_info["status"] = result.get("status", "pending")
                     job_info["matches"] = result.get("matches", [])
-                    job_info["message"] = result.get("message", "")
+                    msg = result.get("message", "")
+                    if job_info["status"] != "matched" and msg.lower().startswith("matched"):
+                        msg = "No match found; complaint has been added."
+                    job_info["message"] = msg
                 else:
                     job_info["status"] = "pending"
                     job_info["matches"] = []
@@ -377,7 +384,10 @@ async def get_complaint_by_id(job_id: str):
             result = json.loads(result_str)
             job_info["status"] = result.get("status", "pending")
             job_info["matches"] = result.get("matches", [])
-            job_info["message"] = result.get("message", "")
+            msg = result.get("message", "")
+            if job_info["status"] != "matched" and msg.lower().startswith("matched"):
+                msg = "No match found; complaint has been added."
+            job_info["message"] = msg
         else:
             job_info["status"] = "pending"
             job_info["matches"] = []
@@ -446,6 +456,13 @@ async def delete_user_complaint(job_id: str, authorization: Optional[str] = Head
                     data["matches"] = filtered
                     if not filtered and data.get("status") == "matched":
                         data["status"] = "no_match"
+                        ji = r.get(f"job:{fid}")
+                        if ji:
+                            j = json.loads(ji)
+                            if j.get("type") == "admin_found":
+                                data["message"] = "No match found; found item has been added to the database."
+                            else:
+                                data["message"] = "No match found; complaint has been added."
                     r.set(f"result:{fid}", json.dumps(data))
                     r.expire(f"result:{fid}", 60*60*24*30)
         except Exception:
@@ -511,6 +528,13 @@ async def delete_admin_found(job_id: str):
                         data["matches"] = filtered
                         if not filtered and data.get("status") == "matched":
                             data["status"] = "no_match"
+                            ji = r.get(f"job:{tid}")
+                            if ji:
+                                j = json.loads(ji)
+                                if j.get("type") == "admin_found":
+                                    data["message"] = "No match found; found item has been added to the database."
+                                else:
+                                    data["message"] = "No match found; complaint has been added."
                         r.set(f"result:{tid}", json.dumps(data))
                         r.expire(f"result:{tid}", 60*60*24*30)
         except Exception:

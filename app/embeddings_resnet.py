@@ -1,6 +1,6 @@
 import torch
 from torchvision import models, transforms
-from PIL import Image
+from PIL import Image, ImageOps
 import numpy as np
 from io import BytesIO
 
@@ -51,15 +51,39 @@ def _embed_img(img: Image.Image) -> np.ndarray:
     return vec if norm == 0 else vec / norm
 
 def get_resnet_embedding_from_bytes(image_bytes: bytes):
-    # Rotation-robust embedding: average features over 0/90/180/270 rotations
     img = Image.open(BytesIO(image_bytes)).convert("RGB")
+    img = ImageOps.autocontrast(img, cutoff=2)
+    base = img
+    flip = ImageOps.mirror(base)
     variants = [
-        img,
-        img.rotate(90, expand=True),
-        img.rotate(180, expand=True),
-        img.rotate(270, expand=True),
+        base,
+        base.rotate(90, expand=True),
+        base.rotate(180, expand=True),
+        base.rotate(270, expand=True),
+        flip,
+        flip.rotate(90, expand=True),
+        flip.rotate(180, expand=True),
+        flip.rotate(270, expand=True),
     ]
     vecs = [_embed_img(v) for v in variants]
     avg = np.mean(np.stack(vecs, axis=0), axis=0)
     norm = np.linalg.norm(avg)
     return avg if norm == 0 else avg / norm
+
+def get_resnet_embeddings_variants_from_bytes(image_bytes: bytes):
+    img = Image.open(BytesIO(image_bytes)).convert("RGB")
+    img = ImageOps.autocontrast(img, cutoff=2)
+    base = img
+    flip = ImageOps.mirror(base)
+    variants = [
+        base,
+        base.rotate(90, expand=True),
+        base.rotate(180, expand=True),
+        base.rotate(270, expand=True),
+        flip,
+        flip.rotate(90, expand=True),
+        flip.rotate(180, expand=True),
+        flip.rotate(270, expand=True),
+    ]
+    vecs = [_embed_img(v) for v in variants]
+    return vecs
