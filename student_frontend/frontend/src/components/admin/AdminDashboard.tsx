@@ -35,6 +35,21 @@ const AdminDashboard = ({ onLogout }: AdminDashboardProps) => {
     localStorage.setItem(`unreadNotificationCount:found:${adminUserId}`, unreadCount.toString());
   }, [unreadCount, adminUserId]);
 
+  useEffect(() => {
+    const syncUnread = () => {
+      const saved = localStorage.getItem(`unreadNotificationCount:found:${adminUserId}`);
+      const val = saved !== null ? parseInt(saved, 10) : 0;
+      setTimeout(() => setUnreadCount(val), 0);
+    };
+    window.addEventListener('storage', syncUnread);
+    const eventKey = `localStorageUpdated:found:${adminUserId}`;
+    window.addEventListener(eventKey, syncUnread as EventListener);
+    return () => {
+      window.removeEventListener('storage', syncUnread);
+      window.removeEventListener(eventKey, syncUnread as EventListener);
+    };
+  }, [adminUserId]);
+
   const scrollToTabs = () => {
     tabsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
   };
@@ -59,14 +74,14 @@ const AdminDashboard = ({ onLogout }: AdminDashboardProps) => {
       <Toaster />
       <div className="min-h-screen bg-background">
         <header className="border-b bg-card sticky top-0 z-10">
-        <div className="container mx-auto px-6 py-4">
-          <div className="flex items-center justify-between">
+        <div className="container mx-auto px-4 sm:px-6 py-4">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <h1 className="text-2xl font-bold text-foreground">Lost & Found</h1>
               <p className="text-sm text-muted-foreground">Admin Dashboard</p>
             </div>
-            <div className="flex items-center gap-4">
-              <div className="relative w-80">
+            <div className="flex items-center gap-3 sm:gap-4 flex-wrap justify-start sm:justify-end w-full sm:w-auto">
+              <div className="relative w-full sm:w-80">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                 <Input
                   placeholder="Search items, claims, or users..."
@@ -101,7 +116,7 @@ const AdminDashboard = ({ onLogout }: AdminDashboardProps) => {
         </div>
       </header>
 
-      <main className="container mx-auto px-6 py-8">
+      <main className="container mx-auto px-4 sm:px-6 py-8">
         <StatsPanel />
 
         <div className="mt-8" ref={tabsRef}>

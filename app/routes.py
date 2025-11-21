@@ -432,7 +432,9 @@ async def delete_user_complaint(job_id: str, authorization: Optional[str] = Head
         try:
             db = FaissImageDB(dim=2048)
             db.load("faiss.index", "metadata.pkl")
-            changed = db.remove_by_job_id(job_id)
+            changed = db.purge_by_job_id(job_id)
+            if not changed:
+                changed = db.remove_by_job_id(job_id)
             if changed:
                 db.save("faiss.index", "metadata.pkl")
                 r.set("faiss:reload", "1")
@@ -499,7 +501,9 @@ async def delete_admin_found(job_id: str):
         try:
             db = FaissImageDB(dim=2048)
             db.load("faiss.index", "metadata.pkl")
-            changed = db.remove_by_job_id(job_id)
+            changed = db.purge_by_job_id(job_id)
+            if not changed:
+                changed = db.remove_by_job_id(job_id)
             if changed:
                 db.save("faiss.index", "metadata.pkl")
                 r.set("faiss:reload", "1")

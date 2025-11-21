@@ -65,7 +65,7 @@ const NotificationPanel = ({ onNotificationRead, onMarkAllAsRead, userId, catego
     });
     
     if (onNotificationRead) {
-      onNotificationRead();
+      setTimeout(() => onNotificationRead(), 0);
     }
   };
 
@@ -80,7 +80,7 @@ const NotificationPanel = ({ onNotificationRead, onMarkAllAsRead, userId, catego
     });
     
     if (onMarkAllAsRead) {
-      onMarkAllAsRead();
+      setTimeout(() => onMarkAllAsRead(), 0);
     }
   };
 
@@ -100,7 +100,7 @@ const NotificationPanel = ({ onNotificationRead, onMarkAllAsRead, userId, catego
   };
 
   return (
-    <Card className="w-96 border-0 shadow-lg">
+    <Card className="w-full sm:w-96 max-w-[calc(100vw-2rem)] border-0 shadow-lg">
       <CardHeader className="border-b pb-3">
         <div className="flex items-center justify-between">
           <CardTitle className="text-base font-semibold">Notifications</CardTitle>

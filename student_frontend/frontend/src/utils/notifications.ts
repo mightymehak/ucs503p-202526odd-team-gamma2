@@ -39,8 +39,16 @@ export const addNotification = (
 
   const saved = localStorage.getItem(listKey);
   const notifications: Notification[] = saved !== null ? JSON.parse(saved) : [];
+  const now = Date.now();
+  const DEDUPE_WINDOW_MS = 60 * 1000;
+  const recentSame = notifications.find(n => n.title === title && n.message === message);
+  if (recentSame) {
+    // If the most recent identical notification exists within window, do not add a duplicate
+    // We can't store timestamps in existing structure beyond 'time', so treat any identical top entry as recent
+    return recentSame;
+  }
   const newNotification: Notification = {
-    id: Date.now(),
+    id: now,
     title,
     message,
     time: "Just now",

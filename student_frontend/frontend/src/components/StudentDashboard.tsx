@@ -307,11 +307,83 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout }) => {
     const syncUnread = () => {
       const saved = localStorage.getItem(`unreadNotificationCount:lost:${user?._id || 'anonymous'}`);
       const val = saved !== null ? parseInt(saved, 10) : 0;
-      setUnreadCount(val);
+      setTimeout(() => setUnreadCount(val), 0);
     };
     window.addEventListener('storage', syncUnread);
     return () => {
       window.removeEventListener('storage', syncUnread);
+    };
+  }, [user]);
+
+  useEffect(() => {
+    const uid = user?._id || 'anonymous';
+    const eventKey = `localStorageUpdated:lost:${uid}`;
+    const syncUnread = () => {
+      const saved = localStorage.getItem(`unreadNotificationCount:lost:${uid}`);
+      const val = saved !== null ? parseInt(saved, 10) : 0;
+      setTimeout(() => setUnreadCount(val), 0);
+    };
+    window.addEventListener(eventKey, syncUnread as EventListener);
+    return () => {
+      window.removeEventListener(eventKey, syncUnread as EventListener);
+    };
+  }, [user]);
+
+  useEffect(() => {
+    let active = true;
+    const refresh = async () => {
+      try {
+        const myIds = user && user._id ? JSON.parse(localStorage.getItem(`my_jobs:${user._id}`) || '[]') : [];
+        let complaintsData = await fastApiService.getUserComplaints(user?._id);
+        if (user && user._id) {
+          complaintsData = complaintsData.filter(c => c.user_id === user._id || (c.job_id && myIds.includes(c.job_id)));
+        }
+        const prevStatuses = lastStatusesRef.current;
+        const nextStatuses: Record<string, string> = {};
+        for (const c of complaintsData) {
+          nextStatuses[c.job_id] = c.status;
+        }
+        const updates: Record<string, ComplaintItem> = {};
+        for (const c of complaintsData) {
+          const prev = prevStatuses[c.job_id];
+          const next = c.status;
+          const isTracked = (user && user._id && myIds.includes(c.job_id)) || (c.user_id === user?._id);
+          if (
+            ((prev && next && prev !== next && next !== 'pending') ||
+             (!prev && next && next !== 'pending' && isTracked))
+          ) {
+            const label = next === 'matched' || next === 'high_confidence'
+              ? 'Matched'
+              : next === 'medium_confidence'
+              ? 'Potential Match'
+              : next === 'no_match'
+              ? 'No Match'
+              : next;
+            addNotification(
+              'Item Status Updated',
+              `${c.itemName || 'Item'} is now ${label}`,
+              next === 'matched' || next === 'high_confidence' ? 'success' : next === 'no_match' ? 'info' : 'warning',
+              'lost',
+              user?._id
+            );
+          }
+          updates[c.job_id] = c;
+        }
+        if (active) {
+          setComplaints(prev => prev.map(item => updates[item.job_id] ? { ...item, ...updates[item.job_id] } : item));
+          const stats = {
+            lost: complaintsData.length,
+            matched: complaintsData.filter(c => c.status === 'matched').length,
+          };
+          setSummaryData(stats);
+          lastStatusesRef.current = nextStatuses;
+        }
+      } catch {}
+    };
+    const id = setInterval(refresh, 3000);
+    return () => {
+      active = false;
+      clearInterval(id);
     };
   }, [user]);
 
@@ -352,7 +424,11 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout }) => {
       for (const c of complaintsData) {
         const prev = prevStatuses[c.job_id];
         const next = c.status;
-        if (prev && next && prev !== next && next !== 'pending') {
+        const isTracked = (user && user._id && (JSON.parse(localStorage.getItem(`my_jobs:${user._id}`) || '[]') as string[]).includes(c.job_id)) || (c.user_id === user?._id);
+        if (
+          ((prev && next && prev !== next && next !== 'pending') ||
+           (!prev && next && next !== 'pending' && isTracked))
+        ) {
           const label = next === 'matched' || next === 'high_confidence'
             ? 'Matched'
             : next === 'medium_confidence'
@@ -493,7 +569,7 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout }) => {
             : finalStatus || 'Updated';
           addNotification(
             'Item Status Updated',
-            `Your complaint ${complaintData.itemName || 'Item'} is now ${label}`,
+            `${complaintData.itemName || 'Item'} is now ${label}`,
             finalStatus === 'matched' || finalStatus === 'high_confidence' ? 'success' : finalStatus === 'no_match' ? 'info' : 'warning',
             'lost',
             user?._id

@@ -140,6 +140,58 @@ const FoundItemsTable = ({ searchQuery, onNewItem }: FoundItemsTableProps) => {
     };
   }, []);
 
+  useEffect(() => {
+    const interval = setInterval(async () => {
+      try {
+        const found = await fastApiService.getAdminFoundItems();
+        const mapped: FoundItem[] = found.map((c: ComplaintItem) => {
+          const matchCount = Array.isArray(c.matches) ? c.matches.length : 0;
+          const status = c.status || (matchCount > 0 ? 'matched' : 'pending');
+          const aiConfidence = matchCount > 0 ? Math.round(c.matches![0].score * 100) : 0;
+          return {
+            id: c.job_id || '',
+            name: c.itemName || 'Item',
+            location: c.location || '',
+            date: c.date || new Date(c.timestamp * 1000).toISOString().split('T')[0],
+            status,
+            matchCount,
+            aiMatch: matchCount > 0 ? 'Matched' : 'None',
+            aiConfidence,
+            description: c.message,
+            category: undefined,
+            jobId: c.job_id,
+            photoUrl: c.job_id ? fastApiService.getImageUrl(c.job_id) : undefined,
+          };
+        });
+        setItems(prev => {
+          const byId: Record<string, FoundItem> = {};
+          prev.forEach(p => { byId[p.jobId || p.id] = p; });
+          mapped.forEach(m => {
+            const key = m.jobId || m.id;
+            const prevItem = byId[key];
+            if (prevItem) {
+              byId[key] = {
+                ...prevItem,
+                status: m.status,
+                matchCount: m.matchCount,
+                aiMatch: m.aiMatch,
+                aiConfidence: m.aiConfidence,
+                name: m.name || prevItem.name,
+                location: m.location || prevItem.location,
+                date: m.date || prevItem.date,
+              };
+            } else {
+              byId[key] = m;
+            }
+          });
+          const next = Object.values(byId);
+          return next;
+        });
+      } catch {}
+    }, 3000);
+    return () => clearInterval(interval);
+  }, []);
+
   const [viewDialogOpen, setViewDialogOpen] = useState(false);
   const [addDialogOpen, setAddDialogOpen] = useState(false);
   const [selectedItem, setSelectedItem] = useState<FoundItem | null>(null);
@@ -405,16 +457,16 @@ const FoundItemsTable = ({ searchQuery, onNewItem }: FoundItemsTableProps) => {
             {filteredItems.map((item) => (
               <div
                 key={item.id}
-                className="flex items-center justify-between p-4 border rounded-lg hover:bg-muted/50 transition-colors"
+                className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 sm:gap-0 p-4 border rounded-lg hover:bg-muted/50 transition-colors"
               >
-                <div className="flex items-center gap-4 flex-1">
+                <div className="flex items-start sm:items-center gap-3 sm:gap-4 flex-1 flex-wrap">
                   <img
                     src={item.photoUrl || (item.jobId ? fastApiService.getImageUrl(item.jobId) : undefined)}
                     alt={item.name}
                     className="w-16 h-16 object-cover rounded-md border"
                     onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }}
                   />
-                  <div className="flex items-center gap-3">
+                  <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
                     <h4 className="font-semibold text-foreground">{item.name}</h4>
                     {getStatusBadge(item.status, item.matchCount)}
                     <Badge variant="outline" className="gap-1">
@@ -422,7 +474,7 @@ const FoundItemsTable = ({ searchQuery, onNewItem }: FoundItemsTableProps) => {
                       AI: {item.aiMatch}
                     </Badge>
                   </div>
-                  <div className="mt-2 flex gap-4 text-sm text-muted-foreground">
+                  <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-sm text-muted-foreground">
                     <span className="flex items-center gap-1">
                       <MapPin className="h-3 w-3" />
                       {item.location}
@@ -440,11 +492,12 @@ const FoundItemsTable = ({ searchQuery, onNewItem }: FoundItemsTableProps) => {
                     )}
                   </div>
                 </div>
-                <div className="flex gap-2">
+                <div className="flex gap-2 w-full sm:w-auto sm:justify-end">
                   <Button
                     size="sm"
                     variant="outline"
                     onClick={() => openViewDialog(item)}
+                    className="w-full sm:w-auto"
                   >
                     View Details
                   </Button>
@@ -465,6 +518,7 @@ const FoundItemsTable = ({ searchQuery, onNewItem }: FoundItemsTableProps) => {
                           toast.error("Failed to resolve item", { description: error.response?.data?.detail || error.message });
                         }
                       }}
+                      className="w-full sm:w-auto"
                     >
                       Resolved
                     </Button>
@@ -479,7 +533,7 @@ const FoundItemsTable = ({ searchQuery, onNewItem }: FoundItemsTableProps) => {
 
       {/* View Details Dialog */}
       <Dialog open={viewDialogOpen} onOpenChange={setViewDialogOpen}>
-        <DialogContent className="max-w-2xl">
+        <DialogContent className="max-w-[95vw] sm:max-w-2xl">
           <DialogHeader>
             <DialogTitle>Found Item Details</DialogTitle>
             <DialogDescription>
@@ -545,7 +599,7 @@ const FoundItemsTable = ({ searchQuery, onNewItem }: FoundItemsTableProps) => {
 
       {/* Add Found Item Dialog */}
       <Dialog open={addDialogOpen} onOpenChange={setAddDialogOpen}>
-        <DialogContent className="max-w-2xl">
+        <DialogContent className="max-w-[95vw] sm:max-w-2xl">
           <DialogHeader>
             <DialogTitle>Add Found Item</DialogTitle>
             <DialogDescription>
@@ -554,7 +608,7 @@ const FoundItemsTable = ({ searchQuery, onNewItem }: FoundItemsTableProps) => {
           </DialogHeader>
 
           <div className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label htmlFor="item-name">
                   Item Name <span className="text-destructive">*</span>
@@ -641,7 +695,7 @@ const FoundItemsTable = ({ searchQuery, onNewItem }: FoundItemsTableProps) => {
       {/* Status Polling Modal */}
       {pollingJobId && (
         <Dialog open={statusModalOpen} onOpenChange={handleCloseStatusModal}>
-          <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
+          <DialogContent className="max-w-[95vw] sm:max-w-2xl max-h-[80vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle>Request Status</DialogTitle>
               <DialogDescription>

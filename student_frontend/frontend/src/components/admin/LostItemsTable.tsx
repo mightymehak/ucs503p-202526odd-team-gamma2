@@ -77,6 +77,15 @@ const LostItemsTable = ({ searchQuery }: LostItemsTableProps) => {
     };
   }, []);
 
+  useEffect(() => {
+    const interval = setInterval(async () => {
+      try {
+        await fetchLost();
+      } catch {}
+    }, 3000);
+    return () => clearInterval(interval);
+  }, []);
+
   const filteredItems = items.filter((item) =>
     searchQuery === "" ||
     item.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -114,9 +123,9 @@ const LostItemsTable = ({ searchQuery }: LostItemsTableProps) => {
             {filteredItems.map((item) => (
               <div
                 key={item.id}
-                className="flex items-center justify-between p-4 border rounded-lg hover:bg-muted/50 transition-colors"
+                className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 sm:gap-0 p-4 border rounded-lg hover:bg-muted/50 transition-colors"
               >
-                <div className="flex items-center gap-4 flex-1">
+                <div className="flex items-start sm:items-center gap-3 sm:gap-4 flex-1 flex-wrap">
                   <img
                     src={(item as any).imageUrl || undefined}
                     alt={item.name}
@@ -127,7 +136,7 @@ const LostItemsTable = ({ searchQuery }: LostItemsTableProps) => {
                     <h4 className="font-semibold text-foreground">{item.name}</h4>
                     {getStatusBadge(item.status)}
                   </div>
-                  <div className="mt-1 flex gap-4 text-sm text-muted-foreground">
+                  <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-sm text-muted-foreground">
                     <span>Reporter: {item.reporter}</span>
                     <span>•</span>
                     <span>{item.dateReported}</span>

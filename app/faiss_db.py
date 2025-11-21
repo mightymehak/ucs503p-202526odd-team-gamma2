@@ -89,3 +89,29 @@ class FaissImageDB:
                 self.metadata[i] = m
                 changed = True
         return changed
+
+    def purge_by_job_id(self, job_id: str) -> bool:
+        try:
+            ntotal = getattr(self.index, 'ntotal', 0)
+            new_index = faiss.IndexFlatIP(self.index.d)
+            new_metadata = []
+            for i in range(ntotal):
+                if i >= len(self.metadata):
+                    break
+                meta = self.metadata[i]
+                if not isinstance(meta, dict):
+                    continue
+                if meta.get("job_id") == job_id:
+                    continue
+                vec = None
+                if hasattr(self.index, 'reconstruct'):
+                    vec = self.index.reconstruct(i)
+                if vec is None:
+                    return False
+                new_index.add(np.array([vec]).astype(np.float32))
+                new_metadata.append(meta)
+            self.index = new_index
+            self.metadata = new_metadata
+            return True
+        except Exception:
+            return False
